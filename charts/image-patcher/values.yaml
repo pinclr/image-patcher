@@ -7,8 +7,10 @@ nameOverride: ""
 fullnameOverride: "image-patch-operator"
 
 # Controller manager image.
-# Final image = "{registry}/{repository}:{tag}" (registry omitted when empty).
+# Final image = "{registry}/{repository}:{tag}".
 # tag falls back to .Chart.AppVersion when empty.
+# image.registry is REQUIRED (enforced by values.schema.json) so we never
+# accidentally pull from docker.io.
 image:
   registry: ""
   repository: image-patch-system/image-patch-operator

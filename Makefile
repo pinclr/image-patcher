@@ -140,13 +140,17 @@ sync-crds: manifests ## Copy generated CRDs from config/crd/bases/ into the char
 	rm -f $(CHART_DIR)/crds/*.yaml
 	cp config/crd/bases/*.yaml $(CHART_DIR)/crds/
 
+# Example values used to satisfy the chart's values.schema.json during dev.
+# Override with VALUES=path/to/your/values.yaml on the command line.
+VALUES ?= $(CHART_DIR)/examples/values-ysyb.yaml
+
 .PHONY: helm-lint
-helm-lint: ## Lint the Helm chart.
-	$(HELM) lint $(CHART_DIR)
+helm-lint: ## Lint the Helm chart against $(VALUES).
+	$(HELM) lint $(CHART_DIR) -f $(VALUES)
 
 .PHONY: helm-template
-helm-template: ## Render the chart with default values to /tmp/image-patcher.rendered.yaml for inspection.
-	$(HELM) template image-patch $(CHART_DIR) -n image-patch-system > /tmp/image-patcher.rendered.yaml
+helm-template: ## Render the chart with $(VALUES) to /tmp/image-patcher.rendered.yaml for inspection.
+	$(HELM) template image-patch $(CHART_DIR) -n image-patch-system -f $(VALUES) > /tmp/image-patcher.rendered.yaml
 	@echo "Rendered to /tmp/image-patcher.rendered.yaml"
 
 ##@ Deployment
