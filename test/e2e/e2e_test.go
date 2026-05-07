@@ -63,26 +63,27 @@ var _ = Describe("Manager", Ordered, func() {
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
 
-		By("installing CRDs")
-		cmd = exec.Command("make", "install")
+		By("installing the chart via helm (CRDs + controller)")
+		cmd = exec.Command("helm", "install", "image-patch", "./charts/image-patcher",
+			"-n", namespace,
+			"--set", "image.registry=example.com",
+			"--set", "image.repository=image-patch-operator",
+			"--set", "image.tag=v0.0.1",
+			"--set", "image.pullPolicy=IfNotPresent",
+		)
 		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
-
-		By("deploying the controller-manager")
-		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+		Expect(err).NotTo(HaveOccurred(), "Failed to install the chart")
 	})
 
-	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
-	// and deleting the namespace.
+	// After all tests have been executed, clean up by uninstalling the chart and CRDs and
+	// deleting the namespace.
 	AfterAll(func() {
 		By("cleaning up the curl pod for metrics")
 		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace)
 		_, _ = utils.Run(cmd)
 
-		By("undeploying the controller-manager")
-		cmd = exec.Command("make", "undeploy")
+		By("uninstalling the chart")
+		cmd = exec.Command("helm", "uninstall", "image-patch", "-n", namespace)
 		_, _ = utils.Run(cmd)
 
 		By("uninstalling CRDs")
