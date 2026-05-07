@@ -1,0 +1,31 @@
+{{ .Chart.Name }} {{ .Chart.AppVersion }} installed.
+
+  Release:    {{ .Release.Name }}
+  Namespace:  {{ .Release.Namespace }}
+  Image:      {{ include "image-patcher.controllerImage" . }}
+  Kaniko:     {{ include "image-patcher.kanikoImage" . }}
+
+Verify the controller is running:
+
+  kubectl -n {{ .Release.Namespace }} get pods \
+    -l app.kubernetes.io/instance={{ .Release.Name }}
+
+Apply an ImagePatch:
+
+  cat <<EOF | kubectl apply -f -
+  apiVersion: oms.oms.ogpu.cloud/v1alpha1
+  kind: ImagePatch
+  metadata:
+    name: my-app
+    namespace: default
+  spec:
+    baseImage: ubuntu:24.04
+    apt:
+      install: [curl]
+  EOF
+
+NOTE on upgrades:
+  Helm does not update CRDs on `helm upgrade`. If the chart's CRD has
+  changed, apply it manually before running upgrade:
+
+    kubectl apply -f charts/image-patcher/crds/
