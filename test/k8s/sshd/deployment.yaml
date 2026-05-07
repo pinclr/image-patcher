@@ -1,0 +1,31 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ubuntu-sshd
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ubuntu-sshd
+  template:
+    metadata:
+      labels:
+        app: ubuntu-sshd
+    spec:
+      containers:
+        - name: sshd
+          image: registry.luna.ogpu.cloud/luna/ubuntu-patch1:24.04
+          command: ["/usr/sbin/sshd", "-D"]
+          ports:
+            - containerPort: 22
+          volumeMounts:
+            - name: authorized-keys
+              mountPath: /root/.ssh/authorized_keys
+              subPath: authorized_keys
+      volumes:
+        - name: authorized-keys
+          secret:
+            secretName: ssh-key-secret
+            defaultMode: 0600

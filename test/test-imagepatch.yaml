@@ -1,0 +1,21 @@
+apiVersion: oms.oms.ogpu.cloud/v1alpha1
+kind: ImagePatch
+metadata:
+  name: test-patch
+  namespace: image-builder
+spec:
+  baseImage: ubuntu:22.04
+  env:
+    MY_VAR: "hello"
+    DEBIAN_FRONTEND: "noninteractive"
+  apt:
+    install:
+      - curl
+      - vim
+  shell:
+    - name: test-echo
+      run: echo "Hello from patched image"
+    - name: create-dir
+      run: mkdir -p /opt/test
+  cmd:
+    - "/bin/bash"

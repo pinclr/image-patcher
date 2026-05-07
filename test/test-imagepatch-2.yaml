@@ -1,0 +1,37 @@
+apiVersion: oms.oms.ogpu.cloud/v1alpha1
+kind: ImagePatch
+metadata:
+  name: test-patch-2
+  namespace: image-builder
+spec:
+  baseImage: ubuntu:22.04
+  env:
+    HTTP_PROXY: http://proxy:3128
+    HTTPS_PROXY: http://proxy:3128
+  apt:
+    install:
+      - git
+      - vim
+      - curl
+      - ca-certificates
+      - nodejs
+      - npm
+      - python3
+      - python3-pip
+  pip:
+    install:
+      - numpy
+      - requests
+  shell:
+    - name: verify-python
+      run: python3 --version
+    - name: create-workdir
+      run: |
+        mkdir -p /opt/workspace
+        chmod 777 /opt/workspace
+  user:
+    name: dev
+    uid: 1000
+    sudo: true
+  entrypoint:
+    - /bin/bash

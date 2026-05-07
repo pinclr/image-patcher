@@ -1,0 +1,21 @@
+
+---
+apiVersion: oms.oms.ogpu.cloud/v1alpha1
+kind: ImagePatch
+metadata:
+  name: test-patch
+  namespace: default
+spec:
+  baseImage: registry.luna.ogpu.cloud/luna/ubuntu:24.04
+  targetImage: registry.luna.ogpu.cloud/luna/ubuntu-patch1:24.04
+  env:
+    DEBIAN_FRONTEND: "noninteractive"
+  apt:
+    install:
+      - openssh-server
+  shell:
+    - name: configure-sshd
+      run: |
+        mkdir -p /run/sshd
+        chmod 0755 /run/sshd
+        ssh-keygen -A

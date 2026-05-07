@@ -1,0 +1,55 @@
+---
+apiVersion: oms.oms.ogpu.cloud/v1alpha1
+kind: ImagePatch
+metadata:
+  name: ubuntu-complicated-patch
+  namespace: default
+spec:
+  baseImage: registry.luna.ogpu.cloud/luna/pytorch-2.7.1-cuda12.8-cudnn9:latest
+  env:
+    DEBIAN_FRONTEND: "noninteractive"
+    TZ: "Asia/Shanghai"
+    _CONTAINERS_USERNS_CONFIGURED: ""
+  apt:
+    mirror: http://10.11.32.173/ubuntu
+    install:
+      - tini
+      - fuse-overlayfs
+      - podman
+      - crun
+      - openssh-server
+      - supervisor
+      - curl
+      - ca-certificates
+  shell:
+    - name: download-and-extract-rootfs
+      run: |
+        curl -fSL http://10.11.32.177/ysyb-dev-rootfs.tar -o /tmp/ysyb-dev-rootfs.tar
+        tar -xf /tmp/ysyb-dev-rootfs.tar -C /
+        rm -f /tmp/ysyb-dev-rootfs.tar
+    - name: fix-ownership
+      run: |
+        chown -R root:root /root /etc /usr
+        chmod g-s /root
+        chmod 0700 /root
+    - name: set-permissions-etc
+      run: |
+        chmod 644 /etc/containers/containers.conf
+        chmod 644 /etc/containers/storage.conf
+    - name: set-permissions-usr
+      run: |
+        chmod +x /usr/bin/*
+        chmod +x /usr/sbin/*
+    - name: setup-sshd
+      run: |
+        ssh-keygen -A
+    - name: setup-supervisor
+      run: |
+        mkdir -p /var/log/supervisor
+  entrypoint:
+    - /usr/bin/tini
+    - "--"
+  cmd:
+    - /usr/bin/supervisord
+    - "-c"
+    - /etc/supervisor/supervisord.conf
