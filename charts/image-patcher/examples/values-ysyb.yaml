@@ -1,0 +1,23 @@
+# Example values for the "ysyb" environment.
+#
+# Build the controller image and push to the private registry first:
+#   make docker-build docker-push IMAGE_REGISTRY=registry.luna.ogpu.cloud
+#
+# Then install the chart:
+#   helm install image-patch ./charts/image-patcher \
+#     -n image-patch-system --create-namespace \
+#     -f charts/image-patcher/examples/values-ysyb.yaml
+
+image:
+  registry: registry.luna.ogpu.cloud
+  # repository defaults to image-patch-system/image-patch-operator
+  # tag defaults to .Chart.AppVersion (kept in sync with the build)
+
+kaniko:
+  image:
+    registry: registry.luna.ogpu.cloud
+    repository: image-patch-system/kaniko-executor
+    # tag defaults to v1.23.2
+
+config:
+  defaultImageRegistry: registry.luna.ogpu.cloud/patched-images

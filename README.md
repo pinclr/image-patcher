@@ -9,50 +9,89 @@ image-patch-operator lets you define image customizations (apt packages, shell c
 ## Getting Started
 
 ### Prerequisites
-- go version v1.24.6+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
 
-### To Deploy on the cluster
+- kubectl v1.21+
+- A Kubernetes v1.21+ cluster
+- Helm v3.x
+- A container registry you can push the controller image to
 
-**1. Create your environment config file:**
+### 1. Build and push the controller image
 
-```sh
-cp config-example.env config-myenv.env
-# Edit config-myenv.env to set BUILDER_IMAGE_NAME, DEFAULT_IMAGE_REGISTRY, etc.
-```
-
-Config variables:
-
-| Variable | Stage | Description |
-|---|---|---|
-| `BUILDER_IMAGE_NAME` | build | Controller manager image name and tag |
-| `CONTAINER_TOOL` | build | Container tool (`docker`, `podman`, etc.) |
-| `PLATFORM` | build | Target platform (e.g. `linux/amd64`) |
-| `DEFAULT_IMAGE_REGISTRY` | deploy | Default registry for auto-generated target images |
-| `KANIKO_IMAGE_NAME` | deploy | Kaniko executor image (override for air-gapped environments) |
-
-**2. Build and push your image:**
+The image tag is sourced from `appVersion` in `charts/image-patcher/Chart.yaml`, so the build always matches what the chart will pull. You only need to point the build at your registry:
 
 ```sh
-make docker-build docker-push ENV_FILE=config-myenv.env
+make docker-build docker-push IMAGE_REGISTRY=registry.example.com
 ```
 
-**3. Install the CRDs into the cluster:**
+Built artifact: `<IMAGE_REGISTRY>/image-patch-system/image-patch-operator:<appVersion>`.
+
+Override `IMAGE_REPOSITORY` if you publish under a different path, or `PLATFORM` for non-amd64 targets.
+
+### 2. Prepare a values file
+
+Copy and edit one of the bundled examples:
 
 ```sh
-make install
+cp charts/image-patcher/examples/values-ysyb.yaml my-values.yaml
 ```
 
-**4. Deploy the Manager to the cluster:**
+Minimal contents:
+
+```yaml
+image:
+  registry: registry.example.com   # must match the registry you pushed to in step 1
+
+kaniko:
+  image:
+    registry: registry.example.com           # only override for air-gapped envs
+    repository: image-patch-system/kaniko-executor
+
+config:
+  defaultImageRegistry: registry.example.com/patched-images
+```
+
+Defaults you usually do not need to touch live in `charts/image-patcher/values.yaml`.
+
+### 3. Install the chart
 
 ```sh
-make deploy ENV_FILE=config-myenv.env
+helm install image-patch ./charts/image-patcher \
+  -n image-patch-system --create-namespace \
+  -f my-values.yaml
 ```
 
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
-privileges or be logged in as admin.
+Verify:
+
+```sh
+kubectl -n image-patch-system get pods
+```
+
+### Upgrade
+
+For controller-only upgrades (no CRD schema change):
+
+```sh
+helm upgrade image-patch ./charts/image-patcher -n image-patch-system -f my-values.yaml
+```
+
+If the chart's CRD has changed (Helm does not update CRDs on upgrade), apply it first:
+
+```sh
+kubectl apply -f charts/image-patcher/crds/
+helm upgrade image-patch ./charts/image-patcher -n image-patch-system -f my-values.yaml
+```
+
+### Uninstall
+
+```sh
+helm uninstall image-patch -n image-patch-system
+```
+
+CRDs are preserved by Helm convention so existing `ImagePatch` resources are not destroyed. Delete them explicitly if desired:
+
+```sh
+kubectl delete -f charts/image-patcher/crds/
+```
 
 ### ImagePatch CRD
 
@@ -104,12 +143,12 @@ spec:
 
 When `spec.targetImage` is not specified, the controller auto-generates the target image name by parsing `spec.baseImage`:
 
-1. If `DEFAULT_IMAGE_REGISTRY` is set: `<registry>/<base-image-name>-patch:<base-tag>`
+1. If `config.defaultImageRegistry` is set: `<registry>/<base-image-name>-patch:<base-tag>`
 2. Fallback: `<base-image-name>-patch:<base-tag>`
 
 The image name is the last segment of `spec.baseImage` (after the last `/`), and the tag is extracted after `:`. If no tag is specified, `latest` is used.
 
-Example: `baseImage: registry.luna.ogpu.cloud/luna/ubuntu-22.04:latest` with `DEFAULT_IMAGE_REGISTRY=registry.luna.ogpu.cloud/patched-images` produces `registry.luna.ogpu.cloud/patched-images/ubuntu-22.04-patch:latest`.
+Example: `baseImage: registry.luna.ogpu.cloud/luna/ubuntu-22.04:latest` with `config.defaultImageRegistry=registry.luna.ogpu.cloud/patched-images` produces `registry.luna.ogpu.cloud/patched-images/ubuntu-22.04-patch:latest`.
 
 ### Test manifests
 
@@ -124,48 +163,46 @@ kubectl apply -k test/k8s/sshd/
 kubectl apply -k test/k8s/complicated/
 ```
 
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
+## Development
+
+### Run the controller locally
+
+For quick iteration without rebuilding the controller image:
 
 ```sh
-kubectl delete -k config/samples/
+make install   # apply CRDs to your current kubeconfig context
+make run       # run the controller against ~/.kube/config
 ```
 
-**Delete the APIs(CRDs) from the cluster:**
+### Code generation
+
+After editing API types or adding `+kubebuilder:rbac:` markers:
 
 ```sh
-make uninstall
+make manifests generate    # regenerate CRDs/RBAC and DeepCopy methods
+make sync-crds             # propagate updated CRDs to the chart
 ```
 
-**UnDeploy the controller from the cluster:**
+### Tests
 
 ```sh
-make undeploy
+make test       # unit + envtest
+make test-e2e   # end-to-end on a Kind cluster
+make lint
 ```
 
-## Project Distribution
-
-### By providing a bundle with all YAML files
-
-1. Build the installer for the image built and published in the registry:
+### Chart inspection
 
 ```sh
-make build-installer ENV_FILE=config-myenv.env
-```
-
-The makefile target generates an `install.yaml` file in the `dist` directory containing all resources needed to install the project.
-
-2. Using the installer:
-
-```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/image-patch-operator/<tag or branch>/dist/install.yaml
+make helm-lint       # lint chart
+make helm-template   # render to /tmp/image-patcher.rendered.yaml
 ```
 
 ## Contributing
 
-**NOTE:** Run `make help` for more information on all potential `make` targets
+**NOTE:** Run `make help` for more information on all potential `make` targets.
 
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
+More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html).
 
 ## License
 

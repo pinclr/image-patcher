@@ -11,6 +11,6 @@ keywords:
   - operator
   - kubebuilder
 sources:
-  - https://github.com/sharlynxy/image-patcher
+  - https://github.com/pinclr/image-patcher
 maintainers:
-  - name: sharlynxy
+  - name: pinclr

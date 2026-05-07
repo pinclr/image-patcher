@@ -1,17 +1,14 @@
-# Load environment configuration from file if specified
-# Usage: make deploy ENV_FILE=config-ysyb.env
-ifdef ENV_FILE
-include $(ENV_FILE)
-export
-endif
+# App version is sourced from charts/image-patcher/Chart.yaml so the image tag
+# we build always matches the tag the Helm chart will pull.
+CHART_DIR    ?= charts/image-patcher
+APP_VERSION  := $(shell awk '/^appVersion:/ {gsub(/"/, "", $$2); print $$2}' $(CHART_DIR)/Chart.yaml)
 
-# Image URL to use all building/pushing image targets
-BUILDER_IMAGE_NAME ?= image-patch-operator:latest
-IMG = $(BUILDER_IMAGE_NAME)
-
-# Deploy-stage defaults (overridable via ENV_FILE or command line)
-DEFAULT_IMAGE_REGISTRY ?=
-KANIKO_IMAGE_NAME ?= gcr.io/kaniko-project/executor:v1.23.2
+# Controller image identity. Override IMAGE_REGISTRY (and IMAGE_REPOSITORY if needed)
+# on the command line, e.g.:
+#   make docker-build docker-push IMAGE_REGISTRY=registry.luna.ogpu.cloud
+IMAGE_REGISTRY   ?=
+IMAGE_REPOSITORY ?= image-patch-system/image-patch-operator
+IMG := $(if $(IMAGE_REGISTRY),$(IMAGE_REGISTRY)/,)$(IMAGE_REPOSITORY):$(APP_VERSION)
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -130,17 +127,27 @@ docker-build: ## Build docker image with the manager.
 	$(CONTAINER_TOOL) build --platform $(PLATFORM) -t ${IMG} .
 
 .PHONY: docker-push
-docker-push: ## Push docker image with the manager.
+docker-push: ## Push docker image with the manager. Requires IMAGE_REGISTRY to be set.
+	@if [ -z "$(IMAGE_REGISTRY)" ]; then \
+		echo "ERROR: IMAGE_REGISTRY must be set to push (e.g. IMAGE_REGISTRY=registry.example.com)" >&2; exit 1; \
+	fi
 	$(CONTAINER_TOOL) push ${IMG}
 
-.PHONY: build-installer
-build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
-	mkdir -p dist
-	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
-	"$(KUSTOMIZE)" build config/default | \
-		DEFAULT_IMAGE_REGISTRY="$(DEFAULT_IMAGE_REGISTRY)" \
-		KANIKO_IMAGE_NAME="$(KANIKO_IMAGE_NAME)" \
-		envsubst '$$DEFAULT_IMAGE_REGISTRY $$KANIKO_IMAGE_NAME' > dist/install.yaml
+##@ Helm
+
+.PHONY: sync-crds
+sync-crds: manifests ## Copy generated CRDs from config/crd/bases/ into the chart's crds/ directory.
+	rm -f $(CHART_DIR)/crds/*.yaml
+	cp config/crd/bases/*.yaml $(CHART_DIR)/crds/
+
+.PHONY: helm-lint
+helm-lint: ## Lint the Helm chart.
+	$(HELM) lint $(CHART_DIR)
+
+.PHONY: helm-template
+helm-template: ## Render the chart with default values to /tmp/image-patcher.rendered.yaml for inspection.
+	$(HELM) template image-patch $(CHART_DIR) -n image-patch-system > /tmp/image-patcher.rendered.yaml
+	@echo "Rendered to /tmp/image-patcher.rendered.yaml"
 
 ##@ Deployment
 
@@ -149,27 +156,12 @@ ifndef ignore-not-found
 endif
 
 .PHONY: install
-install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~/.kube/config.
-	@out="$$( "$(KUSTOMIZE)" build config/crd 2>/dev/null || true )"; \
-	if [ -n "$$out" ]; then echo "$$out" | "$(KUBECTL)" apply -f -; else echo "No CRDs to install; skipping."; fi
+install: sync-crds ## Install CRDs into the cluster (uses the chart's crds/ directory). For local dev with `make run`.
+	$(KUBECTL) apply -f $(CHART_DIR)/crds/
 
 .PHONY: uninstall
-uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
-	@out="$$( "$(KUSTOMIZE)" build config/crd 2>/dev/null || true )"; \
-	if [ -n "$$out" ]; then echo "$$out" | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -; else echo "No CRDs to delete; skipping."; fi
-
-.PHONY: deploy
-deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
-	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
-	"$(KUSTOMIZE)" build config/default | \
-		DEFAULT_IMAGE_REGISTRY="$(DEFAULT_IMAGE_REGISTRY)" \
-		KANIKO_IMAGE_NAME="$(KANIKO_IMAGE_NAME)" \
-		envsubst '$$DEFAULT_IMAGE_REGISTRY $$KANIKO_IMAGE_NAME' | \
-		"$(KUBECTL)" apply -f -
-
-.PHONY: undeploy
-undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
-	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -
+uninstall: ## Uninstall CRDs from the cluster. Call with ignore-not-found=true to ignore resource not found errors during deletion.
+	$(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f $(CHART_DIR)/crds/
 
 ##@ Dependencies
 
@@ -181,13 +173,12 @@ $(LOCALBIN):
 ## Tool Binaries
 KUBECTL ?= kubectl
 KIND ?= kind
-KUSTOMIZE ?= $(LOCALBIN)/kustomize
+HELM ?= helm
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 
 ## Tool Versions
-KUSTOMIZE_VERSION ?= v5.7.1
 CONTROLLER_TOOLS_VERSION ?= v0.20.0
 
 #ENVTEST_VERSION is the version of controller-runtime release branch to fetch the envtest setup script (i.e. release-0.20)
@@ -201,10 +192,6 @@ ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
   printf '%s\n' "$$v" | sed -E 's/^v?[0-9]+\.([0-9]+).*/1.\1/')
 
 GOLANGCI_LINT_VERSION ?= v2.7.2
-.PHONY: kustomize
-kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
-$(KUSTOMIZE): $(LOCALBIN)
-	$(call go-install-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5,$(KUSTOMIZE_VERSION))
 
 .PHONY: controller-gen
 controller-gen: $(CONTROLLER_GEN) ## Download controller-gen locally if necessary.
