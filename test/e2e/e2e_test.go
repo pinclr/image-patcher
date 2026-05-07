@@ -30,20 +30,20 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"image-builder/test/utils"
+	"image-patch-operator/test/utils"
 )
 
 // namespace where the project is deployed in
-const namespace = "image-builder-system"
+const namespace = "image-patch-system"
 
 // serviceAccountName created for the project
-const serviceAccountName = "image-builder-controller-manager"
+const serviceAccountName = "image-patch-operator-controller-manager"
 
 // metricsServiceName is the name of the metrics service of the project
-const metricsServiceName = "image-builder-controller-manager-metrics-service"
+const metricsServiceName = "image-patch-operator-controller-manager-metrics-service"
 
 // metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
-const metricsRoleBindingName = "image-builder-metrics-binding"
+const metricsRoleBindingName = "image-patch-operator-metrics-binding"
 
 var _ = Describe("Manager", Ordered, func() {
 	var controllerPodName string
@@ -176,7 +176,7 @@ var _ = Describe("Manager", Ordered, func() {
 		It("should ensure the metrics endpoint is serving metrics", func() {
 			By("creating a ClusterRoleBinding for the service account to allow access to metrics")
 			cmd := exec.Command("kubectl", "create", "clusterrolebinding", metricsRoleBindingName,
-				"--clusterrole=image-builder-metrics-reader",
+				"--clusterrole=image-patch-operator-metrics-reader",
 				fmt.Sprintf("--serviceaccount=%s:%s", namespace, serviceAccountName),
 			)
 			_, err := utils.Run(cmd)

@@ -2,7 +2,7 @@ apiVersion: oms.oms.ogpu.cloud/v1alpha1
 kind: ImagePatch
 metadata:
   name: test-patch-2
-  namespace: image-builder
+  namespace: image-patch-system
 spec:
   baseImage: ubuntu:22.04
   env:

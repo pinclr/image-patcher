@@ -1,10 +1,10 @@
-# image-builder
+# image-patch-operator
 
 A Kubernetes operator that patches container images declaratively using the `ImagePatch` CRD. It generates a Dockerfile from the CR spec and builds the patched image in-cluster using [Kaniko](https://github.com/GoogleContainerTools/kaniko).
 
 ## Description
 
-image-builder lets you define image customizations (apt packages, shell commands, environment variables, entrypoint, etc.) as a Kubernetes custom resource. The controller watches `ImagePatch` resources, generates a Dockerfile, and launches a Kaniko job to build and push the patched image to a container registry.
+image-patch-operator lets you define image customizations (apt packages, shell commands, environment variables, entrypoint, etc.) as a Kubernetes custom resource. The controller watches `ImagePatch` resources, generates a Dockerfile, and launches a Kaniko job to build and push the patched image to a container registry.
 
 ## Getting Started
 
@@ -158,7 +158,7 @@ The makefile target generates an `install.yaml` file in the `dist` directory con
 2. Using the installer:
 
 ```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/image-builder/<tag or branch>/dist/install.yaml
+kubectl apply -f https://raw.githubusercontent.com/<org>/image-patch-operator/<tag or branch>/dist/install.yaml
 ```
 
 ## Contributing

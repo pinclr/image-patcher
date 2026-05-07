@@ -4,5 +4,5 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 images:
 - name: controller
-  newName: registry.luna.ogpu.cloud/image-builder-system/image-builder
+  newName: registry.luna.ogpu.cloud/image-patch-system/image-patch-operator
   newTag: v0.1.1

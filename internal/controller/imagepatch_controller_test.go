@@ -27,7 +27,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	omsv1alpha1 "image-builder/api/v1alpha1"
+	omsv1alpha1 "image-patch-operator/api/v1alpha1"
 )
 
 var _ = Describe("ImagePatch Controller", func() {

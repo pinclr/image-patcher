@@ -1,4 +1,4 @@
-# image-builder - AI Agent Guide
+# image-patch-operator - AI Agent Guide
 
 ## Project Structure
 

@@ -35,8 +35,8 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	omsv1alpha1 "image-builder/api/v1alpha1"
-	"image-builder/internal/controller"
+	omsv1alpha1 "image-patch-operator/api/v1alpha1"
+	"image-patch-operator/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
 

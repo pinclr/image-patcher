@@ -6,8 +6,8 @@ cliVersion: 4.11.0
 domain: oms.ogpu.cloud
 layout:
 - go.kubebuilder.io/v4
-projectName: image-builder
-repo: image-builder
+projectName: image-patch-operator
+repo: image-patch-operator
 resources:
 - api:
     crdVersion: v1
@@ -16,6 +16,6 @@ resources:
   domain: oms.ogpu.cloud
   group: oms
   kind: ImagePatch
-  path: image-builder/api/v1alpha1
+  path: image-patch-operator/api/v1alpha1
   version: v1alpha1
 version: "3"

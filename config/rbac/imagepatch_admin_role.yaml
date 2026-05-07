@@ -1,4 +1,4 @@
-# This rule is not used by the project image-builder itself.
+# This rule is not used by the project image-patch-operator itself.
 # It is provided to allow the cluster admin to help manage permissions for users.
 #
 # Grants full permissions ('*') over oms.oms.ogpu.cloud.
@@ -9,7 +9,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   labels:
-    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/name: image-patch-operator
     app.kubernetes.io/managed-by: kustomize
   name: imagepatch-admin-role
 rules:
