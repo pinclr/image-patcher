@@ -1,4 +1,0 @@
-## Append samples of your project ##
-resources:
-- oms_v1alpha1_imagepatch.yaml
-# +kubebuilder:scaffold:manifestskustomizesamples
