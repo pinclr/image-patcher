@@ -1,0 +1,89 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  go-test:
+    name: go test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go vet ./...
+      - run: go build ./...
+      - run: make test
+
+  golangci:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.7.2
+
+  helm:
+    name: helm chart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.1
+
+      - name: helm lint (with example values)
+        run: helm lint charts/image-patcher -f charts/image-patcher/examples/values-ysyb.yaml
+
+      - name: helm template (with example values)
+        run: |
+          helm template image-patch charts/image-patcher \
+            -n image-patch-system \
+            -f charts/image-patcher/examples/values-ysyb.yaml \
+            > /tmp/rendered.yaml
+
+      - name: schema rejects bare install
+        run: |
+          if helm template image-patch charts/image-patcher -n image-patch-system > /dev/null 2>&1; then
+            echo "::error::values.schema.json failed to reject defaults; image.registry should be required"
+            exit 1
+          fi
+
+      - name: install kubeconform
+        run: |
+          curl -sSL -o kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar -xzf kubeconform.tar.gz kubeconform
+          sudo mv kubeconform /usr/local/bin/
+
+      - name: kubeconform validate rendered manifests
+        run: kubeconform -strict -ignore-missing-schemas -summary /tmp/rendered.yaml
+
+  crd-drift:
+    name: CRD drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: regenerate manifests and sync to chart
+        run: make sync-crds
+
+      - name: fail if chart's CRD differs from controller-gen output
+        run: |
+          if ! git diff --exit-code -- config/crd/bases charts/image-patcher/crds; then
+            echo "::error::CRD has drifted from controller-gen output. Run 'make sync-crds' and commit the result."
+            exit 1
+          fi
