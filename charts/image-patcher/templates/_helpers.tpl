@@ -6,6 +6,18 @@ Expand the name of the chart.
 {{- end }}
 
 {{/*
+Enforce that the chart is installed in the image-patch-system namespace.
+Resource names use a fixed prefix and ClusterRoleBinding subjects point
+at this namespace, so installing elsewhere yields a half-broken release.
+Fail fast at template/install time with an actionable message.
+*/}}
+{{- define "image-patcher.assertNamespace" -}}
+{{- if ne .Release.Namespace "image-patch-system" -}}
+{{- fail (printf "image-patcher must be installed in the 'image-patch-system' namespace, got %q. Pass: --namespace image-patch-system --create-namespace" .Release.Namespace) -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 Fully qualified app name. Truncated to 63 chars per Kubernetes DNS spec.
 */}}
 {{- define "image-patcher.fullname" -}}
