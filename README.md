@@ -60,6 +60,8 @@ helm install image-patch ./charts/image-patcher \
   -f my-values.yaml
 ```
 
+> The chart asserts `--namespace image-patch-system` at render time — installing into any other namespace fails fast with an actionable error. ClusterRoleBinding subjects and the leader-election Role are pinned to that namespace, so a different value would yield a half-broken release.
+
 Verify:
 
 ```sh
