@@ -2,7 +2,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "image-patcher.fullname" . }}-controller-manager
+  name: {{ include "image-patcher.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "image-patcher.labels" . | nindent 4 }}

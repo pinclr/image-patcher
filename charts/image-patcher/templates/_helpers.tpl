@@ -67,7 +67,7 @@ ServiceAccount name.
 */}}
 {{- define "image-patcher.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create }}
-{{- default (printf "%s-controller-manager" (include "image-patcher.fullname" .)) .Values.serviceAccount.name }}
+{{- default (include "image-patcher.fullname" .) .Values.serviceAccount.name }}
 {{- else }}
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}

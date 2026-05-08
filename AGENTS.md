@@ -172,7 +172,7 @@ helm install image-patch ./charts/image-patcher \
 kubectl apply -f config/samples/
 
 # 5. Debug
-kubectl logs -n image-patch-system deployment/image-patch-operator-controller-manager -c manager -f
+kubectl logs -n image-patch-system deployment/image-patch-operator -c manager -f
 ```
 
 ### API Design

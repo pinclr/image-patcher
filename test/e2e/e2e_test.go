@@ -37,10 +37,10 @@ import (
 const namespace = "image-patch-system"
 
 // serviceAccountName created for the project
-const serviceAccountName = "image-patch-operator-controller-manager"
+const serviceAccountName = "image-patch-operator"
 
 // metricsServiceName is the name of the metrics service of the project
-const metricsServiceName = "image-patch-operator-controller-manager-metrics-service"
+const metricsServiceName = "image-patch-operator-metrics"
 
 // metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
 const metricsRoleBindingName = "image-patch-operator-metrics-binding"
@@ -160,7 +160,7 @@ var _ = Describe("Manager", Ordered, func() {
 				podNames := utils.GetNonEmptyLines(podOutput)
 				g.Expect(podNames).To(HaveLen(1), "expected 1 controller pod running")
 				controllerPodName = podNames[0]
-				g.Expect(controllerPodName).To(ContainSubstring("controller-manager"))
+				g.Expect(controllerPodName).To(ContainSubstring("image-patch-operator"))
 
 				// Validate the pod's status
 				cmd = exec.Command("kubectl", "get",
