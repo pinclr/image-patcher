@@ -1,0 +1,88 @@
+# Default values for image-patcher chart.
+
+# nameOverride / fullnameOverride control resource naming.
+# fullnameOverride defaults to "image-patch-operator" so resource names match
+# the controller image and the legacy kustomize deployment.
+nameOverride: ""
+fullnameOverride: "image-patch-operator"
+
+# Controller manager image.
+# Final image = "{registry}/{repository}:{tag}".
+# tag falls back to .Chart.AppVersion when empty.
+# image.registry is REQUIRED (enforced by values.schema.json) so we never
+# accidentally pull from docker.io.
+image:
+  registry: ""
+  repository: image-patch-system/image-patch-operator
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# Controller runtime configuration. Each field is rendered into a container env var.
+config:
+  # DEFAULT_IMAGE_REGISTRY: registry used when an ImagePatch does not set spec.targetImage.
+  defaultImageRegistry: ""
+
+# Kaniko executor image, injected as KANIKO_IMAGE_NAME env var.
+# Override registry for air-gapped or mirrored environments.
+kaniko:
+  image:
+    registry: gcr.io
+    repository: kaniko-project/executor
+    tag: v1.23.2
+
+replicaCount: 1
+
+leaderElection:
+  enabled: true
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+podLabels: {}
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+rbac:
+  # Whether to create the controller's RBAC (ClusterRole + ClusterRoleBinding + leader-election Role).
+  create: true
+  # Whether to create the imagepatch-{admin,editor,viewer} aggregated ClusterRoles
+  # for end users (not consumed by the controller itself).
+  aggregatedRoles:
+    create: true
+
+metrics:
+  enabled: true
+  port: 8443
+  service:
+    type: ClusterIP
+
+# Extra args appended to the controller command line.
+extraArgs: []
+# Extra environment variables appended to the controller container.
+extraEnv: []

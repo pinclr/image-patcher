@@ -1,4 +1,4 @@
-# image-builder - AI Agent Guide
+# image-patch-operator - AI Agent Guide
 
 ## Project Structure
 
@@ -152,20 +152,27 @@ Tests use **Ginkgo + Gomega** (BDD style). Check `suite_test.go` for setup.
 
 ## Deployment Workflow
 
+This project ships as a Helm chart at `charts/image-patcher/`. The image tag is
+sourced from `Chart.yaml`'s `appVersion`, so build and deploy stay in sync.
+
 ```bash
-# 1. Regenerate manifests
+# 1. Regenerate manifests; propagate CRDs to the chart
 make manifests generate
+make sync-crds
 
-# 2. Build & deploy
-export IMG=<registry>/<project>:tag
-make docker-build docker-push IMG=$IMG  # Or: kind load docker-image $IMG --name <cluster>
-make deploy IMG=$IMG
+# 2. Build & push controller image
+make docker-build docker-push IMAGE_REGISTRY=<registry>
 
-# 3. Test
-kubectl apply -k config/samples/
+# 3. Install
+helm install image-patch ./charts/image-patcher \
+  -n image-patch-system --create-namespace \
+  -f charts/image-patcher/examples/values-ysyb.yaml
 
-# 4. Debug
-kubectl logs -n <project>-system deployment/<project>-controller-manager -c manager -f
+# 4. Apply a sample
+kubectl apply -f config/samples/
+
+# 5. Debug
+kubectl logs -n image-patch-system deployment/image-patch-operator -c manager -f
 ```
 
 ### API Design
@@ -229,42 +236,26 @@ kubebuilder create api --group example --version v1alpha1 --kind MyApp \
 
 Generated code includes: status conditions (`metav1.Condition`), finalizers, owner references, events, idempotent reconciliation.
 
-## Distribution Options
+## Distribution
 
-### Option 1: YAML Bundle (Kustomize)
+This project is distributed as a hand-written Helm chart at `charts/image-patcher/`.
+There is no kustomize-based bundle and no kubebuilder helm plugin scaffold —
+edit the chart templates directly.
 
 ```bash
-# Generate dist/install.yaml from Kustomize manifests
-make build-installer IMG=<registry>/<project>:tag
+# Lint and render
+make helm-lint
+make helm-template   # output: /tmp/image-patcher.rendered.yaml
 ```
 
-**Key points:**
-- The `dist/install.yaml` is generated from Kustomize manifests (CRDs, RBAC, Deployment)
-- Commit this file to your repository for easy distribution
-- Users only need `kubectl` to install (no additional tools required)
-
-**Example:** Users install with a single command:
-```bash
-kubectl apply -f https://raw.githubusercontent.com/<org>/<repo>/<tag>/dist/install.yaml
-```
-
-### Option 2: Helm Chart
+When releasing:
 
 ```bash
-kubebuilder edit --plugins=helm/v2-alpha  # One-time, generates dist/chart/
-# Users install: helm install my-release ./dist/chart/ --namespace <ns> --create-namespace
-```
-
-**Important:** If you add webhooks or modify manifests after initial chart generation:
-1. Backup any customizations in `dist/chart/values.yaml` and `dist/chart/manager/manager.yaml`
-2. Re-run: `kubebuilder edit --plugins=helm/v2-alpha --force`
-3. Manually restore your custom values from the backup
-
-### Publish Container Image
-
-```bash
-export IMG=<registry>/<project>:<version>
-make docker-build docker-push IMG=$IMG
+# 1. Bump appVersion in charts/image-patcher/Chart.yaml
+# 2. Build, push, install
+make docker-build docker-push IMAGE_REGISTRY=<registry>
+helm install image-patch ./charts/image-patcher \
+  -n image-patch-system --create-namespace -f my-values.yaml
 ```
 
 ## References

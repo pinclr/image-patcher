@@ -30,20 +30,20 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"image-builder/test/utils"
+	"image-patch-operator/test/utils"
 )
 
 // namespace where the project is deployed in
-const namespace = "image-builder-system"
+const namespace = "image-patch-system"
 
 // serviceAccountName created for the project
-const serviceAccountName = "image-builder-controller-manager"
+const serviceAccountName = "image-patch-operator"
 
 // metricsServiceName is the name of the metrics service of the project
-const metricsServiceName = "image-builder-controller-manager-metrics-service"
+const metricsServiceName = "image-patch-operator-metrics"
 
 // metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
-const metricsRoleBindingName = "image-builder-metrics-binding"
+const metricsRoleBindingName = "image-patch-operator-metrics-binding"
 
 var _ = Describe("Manager", Ordered, func() {
 	var controllerPodName string
@@ -63,26 +63,27 @@ var _ = Describe("Manager", Ordered, func() {
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
 
-		By("installing CRDs")
-		cmd = exec.Command("make", "install")
+		By("installing the chart via helm (CRDs + controller)")
+		cmd = exec.Command("helm", "install", "image-patch", "./charts/image-patcher",
+			"-n", namespace,
+			"--set", "image.registry=example.com",
+			"--set", "image.repository=image-patch-operator",
+			"--set", "image.tag=v0.0.1",
+			"--set", "image.pullPolicy=IfNotPresent",
+		)
 		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
-
-		By("deploying the controller-manager")
-		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+		Expect(err).NotTo(HaveOccurred(), "Failed to install the chart")
 	})
 
-	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
-	// and deleting the namespace.
+	// After all tests have been executed, clean up by uninstalling the chart and CRDs and
+	// deleting the namespace.
 	AfterAll(func() {
 		By("cleaning up the curl pod for metrics")
 		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace)
 		_, _ = utils.Run(cmd)
 
-		By("undeploying the controller-manager")
-		cmd = exec.Command("make", "undeploy")
+		By("uninstalling the chart")
+		cmd = exec.Command("helm", "uninstall", "image-patch", "-n", namespace)
 		_, _ = utils.Run(cmd)
 
 		By("uninstalling CRDs")
@@ -159,7 +160,7 @@ var _ = Describe("Manager", Ordered, func() {
 				podNames := utils.GetNonEmptyLines(podOutput)
 				g.Expect(podNames).To(HaveLen(1), "expected 1 controller pod running")
 				controllerPodName = podNames[0]
-				g.Expect(controllerPodName).To(ContainSubstring("controller-manager"))
+				g.Expect(controllerPodName).To(ContainSubstring("image-patch-operator"))
 
 				// Validate the pod's status
 				cmd = exec.Command("kubectl", "get",
@@ -176,7 +177,7 @@ var _ = Describe("Manager", Ordered, func() {
 		It("should ensure the metrics endpoint is serving metrics", func() {
 			By("creating a ClusterRoleBinding for the service account to allow access to metrics")
 			cmd := exec.Command("kubectl", "create", "clusterrolebinding", metricsRoleBindingName,
-				"--clusterrole=image-builder-metrics-reader",
+				"--clusterrole=image-patch-operator-metrics-reader",
 				fmt.Sprintf("--serviceaccount=%s:%s", namespace, serviceAccountName),
 			)
 			_, err := utils.Run(cmd)

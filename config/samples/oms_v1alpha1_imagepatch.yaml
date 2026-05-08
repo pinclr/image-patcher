@@ -2,7 +2,7 @@ apiVersion: oms.oms.ogpu.cloud/v1alpha1
 kind: ImagePatch
 metadata:
   labels:
-    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/name: image-patch-operator
     app.kubernetes.io/managed-by: kustomize
   name: imagepatch-sample
 spec:

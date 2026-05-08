@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	v1alpha1 "image-builder/api/v1alpha1"
+	v1alpha1 "image-patch-operator/api/v1alpha1"
 )
 
 func TestDockerfileGenMirror(t *testing.T) {

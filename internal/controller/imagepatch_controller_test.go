@@ -27,7 +27,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	omsv1alpha1 "image-builder/api/v1alpha1"
+	omsv1alpha1 "image-patch-operator/api/v1alpha1"
 )
 
 var _ = Describe("ImagePatch Controller", func() {
@@ -69,8 +69,9 @@ var _ = Describe("ImagePatch Controller", func() {
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &ImagePatchReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:      k8sClient,
+				Scheme:      k8sClient.Scheme(),
+				KanikoImage: "gcr.io/kaniko-project/executor:v1.23.2",
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{

@@ -1,4 +1,4 @@
-module image-builder
+module image-patch-operator
 
 go 1.25.5
 

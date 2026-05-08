@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "image-patcher chart values",
+  "type": "object",
+  "required": ["image"],
+  "properties": {
+    "image": {
+      "type": "object",
+      "required": ["registry", "repository"],
+      "properties": {
+        "registry": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Container registry that hosts the controller image (e.g. registry.example.com). Must be set; bare repositories are not pulled from docker.io by accident."
+        },
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string"
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["IfNotPresent", "Always", "Never"]
+        }
+      }
+    },
+    "kaniko": {
+      "type": "object",
+      "properties": {
+        "image": {
+          "type": "object",
+          "required": ["repository", "tag"],
+          "properties": {
+            "registry": {
+              "type": "string"
+            },
+            "repository": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tag": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}

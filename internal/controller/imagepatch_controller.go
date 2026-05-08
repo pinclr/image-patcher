@@ -32,7 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	omsv1alpha1 "image-builder/api/v1alpha1"
+	omsv1alpha1 "image-patch-operator/api/v1alpha1"
 )
 
 // ImagePatchReconciler reconciles a ImagePatch object
