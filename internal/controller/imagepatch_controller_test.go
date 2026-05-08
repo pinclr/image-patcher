@@ -69,8 +69,9 @@ var _ = Describe("ImagePatch Controller", func() {
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &ImagePatchReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:      k8sClient,
+				Scheme:      k8sClient.Scheme(),
+				KanikoImage: "gcr.io/kaniko-project/executor:v1.23.2",
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
