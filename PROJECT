@@ -3,7 +3,7 @@
 # and allow the plugins properly work.
 # More info: https://book.kubebuilder.io/reference/project-config.html
 cliVersion: 4.11.0
-domain: oms.ogpu.cloud
+domain: ogpu.cloud
 layout:
 - go.kubebuilder.io/v4
 projectName: image-patch-operator
@@ -13,7 +13,7 @@ resources:
     crdVersion: v1
     namespaced: true
   controller: true
-  domain: oms.ogpu.cloud
+  domain: ogpu.cloud
   group: oms
   kind: ImagePatch
   path: image-patch-operator/api/v1alpha1

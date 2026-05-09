@@ -13,7 +13,7 @@ Verify the controller is running:
 Apply an ImagePatch:
 
   cat <<EOF | kubectl apply -f -
-  apiVersion: oms.oms.ogpu.cloud/v1alpha1
+  apiVersion: oms.ogpu.cloud/v1alpha1
   kind: ImagePatch
   metadata:
     name: my-app

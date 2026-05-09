@@ -6,10 +6,10 @@ metadata:
   labels:
     {{- include "image-patcher.labels" . | nindent 4 }}
 rules:
-  - apiGroups: ["oms.oms.ogpu.cloud"]
+  - apiGroups: ["oms.ogpu.cloud"]
     resources: ["imagepatches"]
     verbs: ["*"]
-  - apiGroups: ["oms.oms.ogpu.cloud"]
+  - apiGroups: ["oms.ogpu.cloud"]
     resources: ["imagepatches/status"]
     verbs: ["get"]
 ---
@@ -20,10 +20,10 @@ metadata:
   labels:
     {{- include "image-patcher.labels" . | nindent 4 }}
 rules:
-  - apiGroups: ["oms.oms.ogpu.cloud"]
+  - apiGroups: ["oms.ogpu.cloud"]
     resources: ["imagepatches"]
     verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
-  - apiGroups: ["oms.oms.ogpu.cloud"]
+  - apiGroups: ["oms.ogpu.cloud"]
     resources: ["imagepatches/status"]
     verbs: ["get"]
 ---
@@ -34,10 +34,10 @@ metadata:
   labels:
     {{- include "image-patcher.labels" . | nindent 4 }}
 rules:
-  - apiGroups: ["oms.oms.ogpu.cloud"]
+  - apiGroups: ["oms.ogpu.cloud"]
     resources: ["imagepatches"]
     verbs: ["get", "list", "watch"]
-  - apiGroups: ["oms.oms.ogpu.cloud"]
+  - apiGroups: ["oms.ogpu.cloud"]
     resources: ["imagepatches/status"]
     verbs: ["get"]
 {{- end }}

@@ -43,9 +43,9 @@ type ImagePatchReconciler struct {
 	KanikoImage     string
 }
 
-// +kubebuilder:rbac:groups=oms.oms.ogpu.cloud,resources=imagepatches,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=oms.oms.ogpu.cloud,resources=imagepatches/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=oms.oms.ogpu.cloud,resources=imagepatches/finalizers,verbs=update
+// +kubebuilder:rbac:groups=oms.ogpu.cloud,resources=imagepatches,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=oms.ogpu.cloud,resources=imagepatches/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=oms.ogpu.cloud,resources=imagepatches/finalizers,verbs=update
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 

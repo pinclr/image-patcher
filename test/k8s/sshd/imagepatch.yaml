@@ -1,6 +1,6 @@
 
 ---
-apiVersion: oms.oms.ogpu.cloud/v1alpha1
+apiVersion: oms.ogpu.cloud/v1alpha1
 kind: ImagePatch
 metadata:
   name: test-patch

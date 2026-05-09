@@ -100,7 +100,7 @@ kubectl delete -f charts/image-patcher/crds/
 Create an `ImagePatch` resource to build a patched image:
 
 ```yaml
-apiVersion: oms.oms.ogpu.cloud/v1alpha1
+apiVersion: oms.ogpu.cloud/v1alpha1
 kind: ImagePatch
 metadata:
   name: my-app
