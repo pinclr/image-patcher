@@ -23,9 +23,10 @@
   `name` / `namespace` labels on histograms and counters; per-resource phase
   visibility belongs in kube-state-metrics (see *Operator vs kube-state-metrics*
   below).
-- A `ServiceMonitor` / `PodMonitor` chart template. The metrics `Service`
-  exists; whether to ship a `monitoring.coreos.com` resource depends on the
-  consumer's Prometheus install and is tracked separately.
+- A `PodMonitor` chart template. The `Service` + `ServiceMonitor` pair is
+  sufficient for kube-prometheus-stack-style installs; we only revisit
+  `PodMonitor` if a consumer hits a case where the Service abstraction is
+  in the way.
 
 ## Architecture
 
@@ -275,29 +276,46 @@ The metrics endpoint is HTTPS on `:8443` with authn/authz via
    cert-manager-issued cert (see the `[METRICS-WITH-CERTS]` TODO in
    `cmd/main.go`).
 
-A Prometheus Operator user can drop in a `ServiceMonitor`:
+For clusters running Prometheus Operator (kube-prometheus-stack and similar),
+the chart ships a `ServiceMonitor` + matching `ClusterRoleBinding`, both gated
+on `.Values.metrics.serviceMonitor.enabled` (default `false`):
 
-```yaml
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: image-patch-operator
-  namespace: image-patch-system
-spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: image-patcher
-  endpoints:
-    - port: https
-      scheme: https
-      bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
-      tlsConfig:
-        insecureSkipVerify: true
+- `charts/image-patcher/templates/servicemonitor.yaml` — `ServiceMonitor`
+  pointing at the metrics `Service`, with `scheme: https`, the Prometheus
+  pod's bearer token, and `insecureSkipVerify: true` for the
+  controller-runtime self-signed cert.
+- `charts/image-patcher/templates/rbac-prometheus-metrics-reader.yaml` —
+  `ClusterRoleBinding` so that bearer token passes the metrics endpoint's
+  `TokenReview` / `SubjectAccessReview` filter. The Prometheus
+  `ServiceAccount` name and namespace are configurable; defaults match
+  kube-prometheus-stack's conventional `prometheus-kube-prometheus-prometheus`
+  in `monitoring`.
+
+Enable it during install/upgrade with either:
+
+```sh
+helm upgrade image-patch ./charts/image-patcher -n image-patch-system \
+  -f my-values.yaml \
+  --set metrics.serviceMonitor.enabled=true
 ```
 
-Whether to ship this as a chart template (gated by
-`.Values.metrics.serviceMonitor.enabled`) is left for a follow-up — it depends
-on whether downstream consumers have the Prometheus Operator CRDs installed.
+or by adding to the values file:
+
+```yaml
+metrics:
+  serviceMonitor:
+    enabled: true
+    # interval: 30s
+    # prometheus:
+    #   serviceAccount: { name: ..., namespace: ... }
+    # tlsConfig:
+    #   insecureSkipVerify: true   # switch to a CA bundle when cert-manager
+    #                              # is wired up (see [METRICS-WITH-CERTS])
+```
+
+For clusters without Prometheus Operator CRDs, leave the flag off and
+configure a plain Prometheus `scrape_config` against the metrics `Service`
+instead — the auth and TLS requirements are the same.
 
 ## Example alerts
 
