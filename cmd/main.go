@@ -183,11 +183,19 @@ func main() {
 		kanikoImage = "gcr.io/kaniko-project/executor:v1.23.2"
 	}
 
+	cacheMountPath := os.Getenv("KANIKO_CACHE_MOUNT_PATH")
+	if cacheMountPath == "" {
+		cacheMountPath = "/cache"
+	}
+
 	if err := (&controller.ImagePatchReconciler{
-		Client:          mgr.GetClient(),
-		Scheme:          mgr.GetScheme(),
-		DefaultRegistry: os.Getenv("DEFAULT_IMAGE_REGISTRY"),
-		KanikoImage:     kanikoImage,
+		Client:               mgr.GetClient(),
+		Scheme:               mgr.GetScheme(),
+		DefaultRegistry:      os.Getenv("DEFAULT_IMAGE_REGISTRY"),
+		KanikoImage:          kanikoImage,
+		KanikoCachePVC:       os.Getenv("KANIKO_CACHE_PVC"),
+		KanikoCacheMountPath: cacheMountPath,
+		KanikoCacheRepo:      os.Getenv("KANIKO_CACHE_REPO"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ImagePatch")
 		os.Exit(1)

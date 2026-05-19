@@ -66,6 +66,16 @@ spec:
               value: {{ .Values.config.defaultImageRegistry | quote }}
             - name: KANIKO_IMAGE_NAME
               value: {{ include "image-patcher.kanikoImage" . | quote }}
+            {{- if .Values.kaniko.cache.enabled }}
+            - name: KANIKO_CACHE_PVC
+              value: {{ default (printf "%s-kaniko-cache" (include "image-patcher.fullname" .)) .Values.kaniko.cache.existingClaim | quote }}
+            - name: KANIKO_CACHE_MOUNT_PATH
+              value: {{ .Values.kaniko.cache.mountPath | quote }}
+            {{- end }}
+            {{- with .Values.kaniko.cacheRepo }}
+            - name: KANIKO_CACHE_REPO
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

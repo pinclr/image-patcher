@@ -32,6 +32,28 @@ kaniko:
     repository: kaniko-project/executor
     tag: v1.23.2
 
+  # Local pull cache for Kaniko: a PVC mounted into every build Job at
+  # cache.mountPath. Kaniko is invoked with --cache-dir=<mountPath> so pulled
+  # base-image layers persist across builds. The PVC lifecycle is decoupled
+  # from any single ImagePatch CR — it lives as long as the chart release.
+  #
+  # The PVC is ReadWriteOnce, so concurrent ImagePatch builds will serialize
+  # on the volume. For a cluster with frequent parallel patches, point
+  # existingClaim at a ReadWriteMany PVC backed by NFS / CephFS.
+  cache:
+    enabled: false
+    # If set, the controller mounts this existing PVC (chart skips creating one).
+    existingClaim: ""
+    size: 100Gi
+    storageClassName: ""
+    mountPath: /cache
+
+  # Optional layer cache backed by a container registry. Independent from the
+  # local pull cache above; both can be enabled simultaneously. Set to a
+  # repository path like "registry.luna.ogpu.cloud/kaniko-cache" and the
+  # controller passes --cache=true --cache-repo=<value> to Kaniko.
+  cacheRepo: ""
+
 replicaCount: 1
 
 leaderElection:

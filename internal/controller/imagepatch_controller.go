@@ -43,6 +43,19 @@ type ImagePatchReconciler struct {
 	Scheme          *runtime.Scheme
 	DefaultRegistry string
 	KanikoImage     string
+	// KanikoCachePVC, when set, is the name of a PVC (in the same namespace
+	// as the ImagePatch) the controller mounts into every Kaniko build Job
+	// at KanikoCacheMountPath. Kaniko is then invoked with
+	// --cache-dir=<mountPath> so pulled base-image layers persist across
+	// builds. The PVC is managed by the chart (or pre-provisioned by an
+	// admin) — its lifecycle is independent of any single ImagePatch.
+	KanikoCachePVC       string
+	KanikoCacheMountPath string
+	// KanikoCacheRepo, when set, is passed to Kaniko as --cache-repo for
+	// the layer cache (intermediate RUN steps cached in a container
+	// registry). Independent from the local pull-cache PVC above; both can
+	// be enabled at once.
+	KanikoCacheRepo string
 }
 
 // +kubebuilder:rbac:groups=oms.ogpu.cloud,resources=imagepatches,verbs=get;list;watch;create;update;patch;delete
@@ -85,7 +98,8 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 
 		destination := r.resolveDestination(&imagePatch)
-		j := constructJob(&imagePatch, jobName, cmName, destination, r.KanikoImage)
+		j := constructJob(&imagePatch, jobName, cmName, destination, r.KanikoImage,
+			r.KanikoCachePVC, r.KanikoCacheMountPath, r.KanikoCacheRepo)
 		if err := controllerutil.SetControllerReference(&imagePatch, j, r.Scheme); err != nil {
 			metrics.RecordReconcileFailure(metrics.ReasonOwnerRef)
 			return ctrl.Result{}, err
@@ -213,10 +227,67 @@ func (r *ImagePatchReconciler) createOrUpdateConfigMap(ctx context.Context, imag
 	return nil
 }
 
-func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, destination, kanikoImage string) *batchv1.Job {
+func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, destination, kanikoImage, cachePVCName, cacheMountPath, cacheRepo string) *batchv1.Job {
 
 	backoffLimit := int32(0)
 	secretDefaultMode := int32(0664)
+
+	args := []string{
+		"--dockerfile=/workspace/Dockerfile",
+		"--context=/workspace/context",
+		"--destination=" + destination,
+	}
+	if cachePVCName != "" {
+		args = append(args, "--cache-dir="+cacheMountPath)
+	}
+	if cacheRepo != "" {
+		args = append(args, "--cache=true", "--cache-repo="+cacheRepo)
+	}
+
+	volumeMounts := []corev1.VolumeMount{
+		{Name: "dockerfile", MountPath: "/workspace/Dockerfile", SubPath: "Dockerfile"},
+		{Name: "context", MountPath: "/workspace/context"},
+		{Name: "docker-auth", MountPath: "/kaniko/.docker/config.json", SubPath: "config.json"},
+	}
+	volumes := []corev1.Volume{
+		{
+			Name: "dockerfile",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: cmName},
+				},
+			},
+		},
+		{
+			Name: "context",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		},
+		{
+			Name: "docker-auth",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName:  "image-registry-secret",
+					DefaultMode: &secretDefaultMode,
+				},
+			},
+		},
+	}
+	if cachePVCName != "" {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "kaniko-cache",
+			MountPath: cacheMountPath,
+		})
+		volumes = append(volumes, corev1.Volume{
+			Name: "kaniko-cache",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: cachePVCName,
+				},
+			},
+		})
+	}
 
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -234,56 +305,13 @@ func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, destination, kani
 					RestartPolicy: corev1.RestartPolicyNever,
 					Containers: []corev1.Container{
 						{
-							Name:  "kaniko",
-							Image: kanikoImage,
-							Args: []string{
-								"--dockerfile=/workspace/Dockerfile",
-								"--context=/workspace/context",
-								"--destination=" + destination,
-							},
-							VolumeMounts: []corev1.VolumeMount{
-								{
-									Name:      "dockerfile",
-									MountPath: "/workspace/Dockerfile",
-									SubPath:   "Dockerfile",
-								},
-								{
-									Name:      "context",
-									MountPath: "/workspace/context",
-								},
-								{
-									Name:      "docker-auth",
-									MountPath: "/kaniko/.docker/config.json",
-									SubPath:   "config.json",
-								},
-							},
+							Name:         "kaniko",
+							Image:        kanikoImage,
+							Args:         args,
+							VolumeMounts: volumeMounts,
 						},
 					},
-					Volumes: []corev1.Volume{
-						{
-							Name: "dockerfile",
-							VolumeSource: corev1.VolumeSource{
-								ConfigMap: &corev1.ConfigMapVolumeSource{
-									LocalObjectReference: corev1.LocalObjectReference{Name: cmName},
-								},
-							},
-						},
-						{
-							Name: "context",
-							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{},
-							},
-						},
-						{
-							Name: "docker-auth",
-							VolumeSource: corev1.VolumeSource{
-								Secret: &corev1.SecretVolumeSource{
-									SecretName:  "image-registry-secret",
-									DefaultMode: &secretDefaultMode,
-								},
-							},
-						},
-					},
+					Volumes: volumes,
 				},
 			},
 		},
