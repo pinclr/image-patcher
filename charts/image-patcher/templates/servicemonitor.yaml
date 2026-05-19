@@ -1,0 +1,28 @@
+{{- if and .Values.metrics.enabled .Values.metrics.serviceMonitor.enabled -}}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "image-patcher.fullname" . }}-metrics
+  {{- with .Values.metrics.serviceMonitor.namespace }}
+  namespace: {{ . }}
+  {{- end }}
+  labels:
+    {{- include "image-patcher.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "image-patcher.selectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: https
+      scheme: https
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.metrics.serviceMonitor.scrapeTimeout }}
+      # Prometheus uses its own ServiceAccount token; the binding in
+      # rbac-prometheus-metrics-reader.yaml authorizes it for /metrics.
+      bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+      tlsConfig:
+        {{- toYaml .Values.metrics.serviceMonitor.tlsConfig | nindent 8 }}
+{{- end }}
