@@ -23,23 +23,39 @@ jobs:
       - uses: actions/checkout@v4
 
       # Make sure the build toolchain the rest of this workflow expects is on
-      # PATH. Idempotent — skips when already installed. Assumes a
-      # Debian/Ubuntu-family runner; swap apt-get for dnf/yum if the runner
+      # PATH, and that rootless podman has a valid user-namespace mapping.
+      # Idempotent — each block skips when already in the right state. Assumes
+      # a Debian/Ubuntu-family runner; swap apt-get for dnf/yum if the runner
       # image ever changes distros.
       - name: ensure make and podman are installed
         run: |
           missing=()
-          command -v make >/dev/null   || missing+=(make)
-          command -v podman >/dev/null || missing+=(podman)
+          command -v make >/dev/null    || missing+=(make)
+          command -v podman >/dev/null  || missing+=(podman)
+          command -v uidmap >/dev/null  || command -v newuidmap >/dev/null || missing+=(uidmap)
           if [ ${#missing[@]} -gt 0 ]; then
             echo "installing: ${missing[*]}"
             sudo apt-get update
             sudo apt-get install -y "${missing[@]}"
           else
-            echo "make and podman already installed"
+            echo "build deps already installed"
           fi
           make --version | head -n1
           podman --version
+
+          # Rootless podman requires the runner user to own a subuid/subgid
+          # range so newuidmap/newgidmap can wire up the build's user namespace.
+          # Without these entries the first podman build fails with:
+          #   Error: cannot setup namespace using newuidmap: exit status 1
+          user="$(id -un)"
+          if ! grep -q "^${user}:" /etc/subuid; then
+            echo "registering subuid/subgid range for ${user}"
+            echo "${user}:100000:65536" | sudo tee -a /etc/subuid
+            echo "${user}:100000:65536" | sudo tee -a /etc/subgid
+            podman system migrate || true
+          else
+            echo "subuid/subgid range for ${user} already registered"
+          fi
 
       - name: build and push controller image
         env:
