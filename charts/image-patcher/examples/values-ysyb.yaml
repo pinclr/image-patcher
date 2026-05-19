@@ -21,3 +21,16 @@ kaniko:
 
 config:
   defaultImageRegistry: registry.luna.ogpu.cloud/patched-images
+
+# This cluster runs kube-prometheus-stack in the `monitoring` namespace
+# under the SA `k8s-prometheus` (not the upstream default
+# `prometheus-kube-prometheus-prometheus`). Enable the chart's
+# ServiceMonitor and point the ClusterRoleBinding at the real SA so
+# Prometheus's bearer token is authorized for the metrics endpoint.
+metrics:
+  serviceMonitor:
+    enabled: true
+    prometheus:
+      serviceAccount:
+        name: k8s-prometheus
+        namespace: monitoring
