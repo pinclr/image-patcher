@@ -22,10 +22,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Self-hosted imagepatcher/build runner uses podman, not docker. The
-      # Makefile parameterizes the container CLI via CONTAINER_TOOL; podman is
-      # CLI-compatible with docker for build/push and reads ~/.docker/config.json
-      # as a fallback auth source.
+      # Self-hosted imagepatcher/build runner uses podman and is not assumed
+      # to have a developer toolchain (make, go) installed. We inline what
+      # the Makefile's docker-build/docker-push targets would do: read the
+      # image tag from Chart.yaml's appVersion, then podman build + push.
+      # Keep this in sync with the Makefile's IMG construction.
       - name: build and push controller image
         env:
           IMAGE_REGISTRY: ${{ secrets.IMAGE_REGISTRY }}
@@ -34,9 +35,16 @@ jobs:
             echo "::error::IMAGE_REGISTRY repo secret is not set"
             exit 1
           fi
-          make docker-build docker-push \
-            IMAGE_REGISTRY="$IMAGE_REGISTRY" \
-            CONTAINER_TOOL=podman
+          app_version=$(awk '/^appVersion:/ {gsub(/"/, "", $2); print $2}' charts/image-patcher/Chart.yaml)
+          if [ -z "$app_version" ]; then
+            echo "::error::could not read appVersion from charts/image-patcher/Chart.yaml"
+            exit 1
+          fi
+          img="$IMAGE_REGISTRY/image-patch-system/image-patch-operator:$app_version"
+          echo "building $img"
+          podman build --platform linux/amd64 -t "$img" .
+          echo "pushing $img"
+          podman push "$img"
 
       - uses: azure/setup-helm@v4
         with:
