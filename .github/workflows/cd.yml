@@ -49,11 +49,23 @@ jobs:
         with:
           version: v3.17.1
 
+      # The self-hosted runner's filesystem persists across jobs, so a
+      # /tmp/charts populated by a previous run would shadow whatever we
+      # just packaged. Use ${{ runner.temp }} (job-scoped, cleaned per run)
+      # and capture the exact file helm produced — don't trust a glob.
       - name: package helm chart
+        id: package
         run: |
-          mkdir -p /tmp/charts
-          helm package charts/image-patcher -d /tmp/charts
-          ls -l /tmp/charts
+          dest="${{ runner.temp }}/charts"
+          mkdir -p "$dest"
+          chart_tgz=$(helm package charts/image-patcher -d "$dest" \
+            | sed -n 's/.*saved it to: //p')
+          if [ -z "$chart_tgz" ] || [ ! -f "$chart_tgz" ]; then
+            echo "::error::helm package did not report a packaged file"
+            exit 1
+          fi
+          echo "packaged: $chart_tgz"
+          echo "chart_tgz=$chart_tgz" >> "$GITHUB_OUTPUT"
 
       # ChartMuseum accepts an overwrite via ?force=true when the server is
       # started with ALLOW_FORCE_OVERWRITE=true. Every main push republishes
@@ -64,6 +76,7 @@ jobs:
           CHARTMUSEUM_URL: ${{ secrets.CHARTMUSEUM_URL }}
           CHARTMUSEUM_USERNAME: ${{ secrets.CHARTMUSEUM_USERNAME }}
           CHARTMUSEUM_PASSWORD: ${{ secrets.CHARTMUSEUM_PASSWORD }}
+          CHART_TGZ: ${{ steps.package.outputs.chart_tgz }}
         run: |
           for v in CHARTMUSEUM_URL CHARTMUSEUM_USERNAME CHARTMUSEUM_PASSWORD; do
             if [ -z "${!v}" ]; then
@@ -71,13 +84,11 @@ jobs:
               exit 1
             fi
           done
-
-          chart_tgz=$(ls /tmp/charts/image-patcher-*.tgz | head -n1)
-          if [ -z "$chart_tgz" ]; then
-            echo "::error::no packaged chart found in /tmp/charts"
+          if [ -z "$CHART_TGZ" ] || [ ! -f "$CHART_TGZ" ]; then
+            echo "::error::no packaged chart available from previous step"
             exit 1
           fi
-          echo "uploading $chart_tgz to ${CHARTMUSEUM_URL%/}"
+          echo "uploading $CHART_TGZ to ${CHARTMUSEUM_URL%/}"
 
           # ChartMuseum lives on an internal IP that the runner's HTTP_PROXY
           # doesn't know how to route, so a previous run got HTTP 503 from
@@ -85,7 +96,7 @@ jobs:
           # just this request without touching the runner's other steps.
           http_code=$(curl -sS --noproxy '*' -o /tmp/cm.resp -w '%{http_code}' \
             -u "$CHARTMUSEUM_USERNAME:$CHARTMUSEUM_PASSWORD" \
-            --data-binary "@$chart_tgz" \
+            --data-binary "@$CHART_TGZ" \
             "${CHARTMUSEUM_URL%/}/api/charts?force=true")
           echo "ChartMuseum responded: HTTP $http_code"
           cat /tmp/cm.resp || true
