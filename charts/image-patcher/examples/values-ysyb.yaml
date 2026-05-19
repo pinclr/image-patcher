@@ -19,6 +19,12 @@ kaniko:
     repository: image-patch-system/kaniko-executor
     # tag defaults to v1.23.2
 
+  # Pull cache: PVC mounted as Kaniko's --cache-dir so pulled base-image
+  # layers persist across builds. Chart creates a 100Gi RWO PVC on the
+  # cluster default storage class.
+  pullCache:
+    enabled: true
+
 config:
   defaultImageRegistry: registry.luna.ogpu.cloud/patched-images
 
