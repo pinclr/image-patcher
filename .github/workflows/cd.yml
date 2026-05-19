@@ -18,10 +18,14 @@ concurrency:
 jobs:
   publish:
     name: publish image + chart
-    runs-on: [self-hosted, linux, x64]
+    runs-on: [self-hosted, imagepatcher, build]
     steps:
       - uses: actions/checkout@v4
 
+      # Self-hosted imagepatcher/build runner uses podman, not docker. The
+      # Makefile parameterizes the container CLI via CONTAINER_TOOL; podman is
+      # CLI-compatible with docker for build/push and reads ~/.docker/config.json
+      # as a fallback auth source.
       - name: build and push controller image
         env:
           IMAGE_REGISTRY: ${{ secrets.IMAGE_REGISTRY }}
@@ -30,7 +34,9 @@ jobs:
             echo "::error::IMAGE_REGISTRY repo secret is not set"
             exit 1
           fi
-          make docker-build docker-push IMAGE_REGISTRY="$IMAGE_REGISTRY"
+          make docker-build docker-push \
+            IMAGE_REGISTRY="$IMAGE_REGISTRY" \
+            CONTAINER_TOOL=podman
 
       - uses: azure/setup-helm@v4
         with:
