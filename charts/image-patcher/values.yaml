@@ -89,6 +89,12 @@ metrics:
     # Render the ServiceMonitor in a different namespace than the chart
     # release. Default (empty) uses .Release.Namespace.
     namespace: ""
+    # Extra labels to add to the ServiceMonitor metadata. kube-prometheus-stack
+    # configures Prometheus with a serviceMonitorSelector like
+    # `release: kube-prometheus-stack`, so the ServiceMonitor needs that label
+    # to be discovered. Check your Prometheus CR's spec.serviceMonitorSelector
+    # and set this accordingly. Empty by default to avoid making assumptions.
+    labels: {}
     interval: 30s
     scrapeTimeout: 10s
     # Bind the controller's metrics-reader ClusterRole to the Prometheus

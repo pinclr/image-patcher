@@ -30,6 +30,11 @@ config:
 metrics:
   serviceMonitor:
     enabled: true
+    # Prometheus CR k8s-prometheus has serviceMonitorSelector
+    # matchLabels: {release: kube-prometheus-stack}, so the ServiceMonitor
+    # must carry that label to be discovered.
+    labels:
+      release: kube-prometheus-stack
     prometheus:
       serviceAccount:
         name: k8s-prometheus
