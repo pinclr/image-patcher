@@ -58,10 +58,10 @@ spec:
       interval: 1m
   install:
     # The chart asserts .Release.Namespace == image-patch-system at render
-    # time, so the namespace must already exist. Flux can create it for you
-    # by flipping this to true; we leave it off and assume the namespace is
-    # managed elsewhere.
-    createNamespace: false
+    # time. Letting Flux create the namespace makes this manifest standalone:
+    # `kubectl apply -f` works on a cluster that doesn't have the namespace
+    # yet. Set to false if the namespace is managed elsewhere.
+    createNamespace: true
     remediation:
       retries: 3
   upgrade:
