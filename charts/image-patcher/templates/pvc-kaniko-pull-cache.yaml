@@ -1,0 +1,27 @@
+{{- if and .Values.kaniko.pullCache.enabled (not .Values.kaniko.pullCache.existingClaim) -}}
+# Pull cache PVC: mounted into every Kaniko build Job at
+# .Values.kaniko.pullCache.mountPath. Caches pulled base-image layers across
+# builds (Kaniko's --cache-dir). Lifecycle is tied to the chart release, not
+# to any individual ImagePatch CR — so cached layers survive patches and CRs
+# being deleted.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "image-patcher.fullname" . }}-kaniko-pull-cache
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "image-patcher.labels" . | nindent 4 }}
+  # Helm preserves PVCs on uninstall by convention; the annotation makes that
+  # explicit. Delete it manually to reclaim the storage.
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- with .Values.kaniko.pullCache.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.kaniko.pullCache.size }}
+{{- end }}

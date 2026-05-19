@@ -43,19 +43,19 @@ type ImagePatchReconciler struct {
 	Scheme          *runtime.Scheme
 	DefaultRegistry string
 	KanikoImage     string
-	// KanikoCachePVC, when set, is the name of a PVC (in the same namespace
-	// as the ImagePatch) the controller mounts into every Kaniko build Job
-	// at KanikoCacheMountPath. Kaniko is then invoked with
+	// KanikoPullCachePVC, when set, is the name of a PVC (in the same
+	// namespace as the ImagePatch) the controller mounts into every Kaniko
+	// build Job at KanikoPullCacheMountPath. Kaniko is then invoked with
 	// --cache-dir=<mountPath> so pulled base-image layers persist across
 	// builds. The PVC is managed by the chart (or pre-provisioned by an
 	// admin) — its lifecycle is independent of any single ImagePatch.
-	KanikoCachePVC       string
-	KanikoCacheMountPath string
-	// KanikoCacheRepo, when set, is passed to Kaniko as --cache-repo for
-	// the layer cache (intermediate RUN steps cached in a container
-	// registry). Independent from the local pull-cache PVC above; both can
-	// be enabled at once.
-	KanikoCacheRepo string
+	KanikoPullCachePVC       string
+	KanikoPullCacheMountPath string
+	// KanikoBuildCacheRepo, when set, is passed to Kaniko as --cache-repo
+	// for the build/layer cache (intermediate RUN steps cached in a
+	// container registry). Independent from the local pull cache PVC above;
+	// both can be enabled at once.
+	KanikoBuildCacheRepo string
 }
 
 // +kubebuilder:rbac:groups=oms.ogpu.cloud,resources=imagepatches,verbs=get;list;watch;create;update;patch;delete
@@ -99,7 +99,7 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 		destination := r.resolveDestination(&imagePatch)
 		j := constructJob(&imagePatch, jobName, cmName, destination, r.KanikoImage,
-			r.KanikoCachePVC, r.KanikoCacheMountPath, r.KanikoCacheRepo)
+			r.KanikoPullCachePVC, r.KanikoPullCacheMountPath, r.KanikoBuildCacheRepo)
 		if err := controllerutil.SetControllerReference(&imagePatch, j, r.Scheme); err != nil {
 			metrics.RecordReconcileFailure(metrics.ReasonOwnerRef)
 			return ctrl.Result{}, err
@@ -227,7 +227,7 @@ func (r *ImagePatchReconciler) createOrUpdateConfigMap(ctx context.Context, imag
 	return nil
 }
 
-func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, destination, kanikoImage, cachePVCName, cacheMountPath, cacheRepo string) *batchv1.Job {
+func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, destination, kanikoImage, pullCachePVC, pullCacheMountPath, buildCacheRepo string) *batchv1.Job {
 
 	backoffLimit := int32(0)
 	secretDefaultMode := int32(0664)
@@ -237,11 +237,11 @@ func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, destination, kani
 		"--context=/workspace/context",
 		"--destination=" + destination,
 	}
-	if cachePVCName != "" {
-		args = append(args, "--cache-dir="+cacheMountPath)
+	if pullCachePVC != "" {
+		args = append(args, "--cache-dir="+pullCacheMountPath)
 	}
-	if cacheRepo != "" {
-		args = append(args, "--cache=true", "--cache-repo="+cacheRepo)
+	if buildCacheRepo != "" {
+		args = append(args, "--cache=true", "--cache-repo="+buildCacheRepo)
 	}
 
 	volumeMounts := []corev1.VolumeMount{
@@ -274,16 +274,16 @@ func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, destination, kani
 			},
 		},
 	}
-	if cachePVCName != "" {
+	if pullCachePVC != "" {
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name:      "kaniko-cache",
-			MountPath: cacheMountPath,
+			Name:      "kaniko-pull-cache",
+			MountPath: pullCacheMountPath,
 		})
 		volumes = append(volumes, corev1.Volume{
-			Name: "kaniko-cache",
+			Name: "kaniko-pull-cache",
 			VolumeSource: corev1.VolumeSource{
 				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: cachePVCName,
+					ClaimName: pullCachePVC,
 				},
 			},
 		})
