@@ -1,0 +1,106 @@
+name: cd
+
+on:
+  push:
+    branches:
+      - main
+      # TODO(MSP-46): remove this entry before merging. Temporarily included
+      # so we can validate the CD pipeline end-to-end (self-hosted runner,
+      # docker push, ChartMuseum upload) without first merging to main.
+      - dev/robert/msp-46-metrics-spec
+  workflow_dispatch:
+
+# Only one release at a time per ref; cancel any in-flight run so the latest commit wins.
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: publish image + chart
+    runs-on: [self-hosted, imagepatcher, build]
+    steps:
+      - uses: actions/checkout@v4
+
+      # TODO(MSP-46): image build skipped pending runner-image update.
+      #
+      # The current runner pod sets no_new_privs, which blocks both `sudo`
+      # (so we cannot apt-install build tooling at workflow time) and
+      # newuidmap (so rootless podman cannot set up its user namespace).
+      # Once the runner image is rebuilt with make + podman + uidmap baked
+      # in, /etc/subuid + /etc/subgid pre-populated for the runner user,
+      # and the pod spec relaxed (drop no_new_privs / loosen seccomp),
+      # re-enable the steps below by flipping `if: false` to `if: true` or
+      # removing the guard entirely.
+      - name: build and push controller image
+        if: false
+        env:
+          IMAGE_REGISTRY: ${{ secrets.IMAGE_REGISTRY }}
+        run: |
+          if [ -z "$IMAGE_REGISTRY" ]; then
+            echo "::error::IMAGE_REGISTRY repo secret is not set"
+            exit 1
+          fi
+          make docker-build docker-push \
+            IMAGE_REGISTRY="$IMAGE_REGISTRY" \
+            CONTAINER_TOOL=podman
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.1
+
+      # The self-hosted runner's filesystem persists across jobs, so a
+      # /tmp/charts populated by a previous run would shadow whatever we
+      # just packaged. Use ${{ runner.temp }} (job-scoped, cleaned per run)
+      # and capture the exact file helm produced — don't trust a glob.
+      - name: package helm chart
+        id: package
+        run: |
+          dest="${{ runner.temp }}/charts"
+          mkdir -p "$dest"
+          chart_tgz=$(helm package charts/image-patcher -d "$dest" \
+            | sed -n 's/.*saved it to: //p')
+          if [ -z "$chart_tgz" ] || [ ! -f "$chart_tgz" ]; then
+            echo "::error::helm package did not report a packaged file"
+            exit 1
+          fi
+          echo "packaged: $chart_tgz"
+          echo "chart_tgz=$chart_tgz" >> "$GITHUB_OUTPUT"
+
+      # ChartMuseum accepts an overwrite via ?force=true when the server is
+      # started with ALLOW_FORCE_OVERWRITE=true. Every main push republishes
+      # the same chart version (Chart.yaml's version is the release contract),
+      # so overwrite is intentional.
+      - name: push chart to ChartMuseum
+        env:
+          CHARTMUSEUM_URL: ${{ secrets.CHARTMUSEUM_URL }}
+          CHARTMUSEUM_USERNAME: ${{ secrets.CHARTMUSEUM_USERNAME }}
+          CHARTMUSEUM_PASSWORD: ${{ secrets.CHARTMUSEUM_PASSWORD }}
+          CHART_TGZ: ${{ steps.package.outputs.chart_tgz }}
+        run: |
+          for v in CHARTMUSEUM_URL CHARTMUSEUM_USERNAME CHARTMUSEUM_PASSWORD; do
+            if [ -z "${!v}" ]; then
+              echo "::error::$v repo secret is not set"
+              exit 1
+            fi
+          done
+          if [ -z "$CHART_TGZ" ] || [ ! -f "$CHART_TGZ" ]; then
+            echo "::error::no packaged chart available from previous step"
+            exit 1
+          fi
+          echo "uploading $CHART_TGZ to ${CHARTMUSEUM_URL%/}"
+
+          # ChartMuseum lives on an internal IP that the runner's HTTP_PROXY
+          # doesn't know how to route, so a previous run got HTTP 503 from
+          # the proxy itself. --noproxy '*' bypasses any proxy env vars for
+          # just this request without touching the runner's other steps.
+          http_code=$(curl -sS --noproxy '*' -o /tmp/cm.resp -w '%{http_code}' \
+            -u "$CHARTMUSEUM_USERNAME:$CHARTMUSEUM_PASSWORD" \
+            --data-binary "@$CHART_TGZ" \
+            "${CHARTMUSEUM_URL%/}/api/charts?force=true")
+          echo "ChartMuseum responded: HTTP $http_code"
+          cat /tmp/cm.resp || true
+          case "$http_code" in
+            2*) ;;
+            *) exit 1 ;;
+          esac

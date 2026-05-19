@@ -81,6 +81,35 @@ metrics:
   port: 8443
   service:
     type: ClusterIP
+  # ServiceMonitor lets Prometheus Operator auto-discover and scrape the
+  # controller's :8443/metrics endpoint. Requires monitoring.coreos.com CRDs
+  # (kube-prometheus-stack or prometheus-operator) installed in the cluster.
+  serviceMonitor:
+    enabled: false
+    # Render the ServiceMonitor in a different namespace than the chart
+    # release. Default (empty) uses .Release.Namespace.
+    namespace: ""
+    # Extra labels to add to the ServiceMonitor metadata. kube-prometheus-stack
+    # configures Prometheus with a serviceMonitorSelector like
+    # `release: kube-prometheus-stack`, so the ServiceMonitor needs that label
+    # to be discovered. Check your Prometheus CR's spec.serviceMonitorSelector
+    # and set this accordingly. Empty by default to avoid making assumptions.
+    labels: {}
+    interval: 30s
+    scrapeTimeout: 10s
+    # Bind the controller's metrics-reader ClusterRole to the Prometheus
+    # server's ServiceAccount so its bearer token is authorized to GET
+    # /metrics. Defaults match kube-prometheus-stack conventional names.
+    prometheus:
+      serviceAccount:
+        name: prometheus-kube-prometheus-prometheus
+        namespace: monitoring
+    # The metrics endpoint serves a controller-runtime self-signed cert by
+    # default; insecureSkipVerify is the working default. Switch to a CA
+    # bundle once cert-manager-issued certs are wired up (see the
+    # [METRICS-WITH-CERTS] TODO in cmd/main.go).
+    tlsConfig:
+      insecureSkipVerify: true
 
 # Extra args appended to the controller command line.
 extraArgs: []
