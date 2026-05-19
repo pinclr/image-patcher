@@ -1,0 +1,72 @@
+name: cd
+
+on:
+  push:
+    branches: [main]
+
+# Only one release at a time; cancel any in-flight run so the latest commit wins.
+concurrency:
+  group: cd-main
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: publish image + chart
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build and push controller image
+        env:
+          IMAGE_REGISTRY: ${{ secrets.IMAGE_REGISTRY }}
+        run: |
+          if [ -z "$IMAGE_REGISTRY" ]; then
+            echo "::error::IMAGE_REGISTRY repo secret is not set"
+            exit 1
+          fi
+          make docker-build docker-push IMAGE_REGISTRY="$IMAGE_REGISTRY"
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.1
+
+      - name: package helm chart
+        run: |
+          mkdir -p /tmp/charts
+          helm package charts/image-patcher -d /tmp/charts
+          ls -l /tmp/charts
+
+      # ChartMuseum accepts an overwrite via ?force=true when the server is
+      # started with ALLOW_FORCE_OVERWRITE=true. Every main push republishes
+      # the same chart version (Chart.yaml's version is the release contract),
+      # so overwrite is intentional.
+      - name: push chart to ChartMuseum
+        env:
+          CHARTMUSEUM_URL: ${{ secrets.CHARTMUSEUM_URL }}
+          CHARTMUSEUM_USERNAME: ${{ secrets.CHARTMUSEUM_USERNAME }}
+          CHARTMUSEUM_PASSWORD: ${{ secrets.CHARTMUSEUM_PASSWORD }}
+        run: |
+          for v in CHARTMUSEUM_URL CHARTMUSEUM_USERNAME CHARTMUSEUM_PASSWORD; do
+            if [ -z "${!v}" ]; then
+              echo "::error::$v repo secret is not set"
+              exit 1
+            fi
+          done
+
+          chart_tgz=$(ls /tmp/charts/image-patcher-*.tgz | head -n1)
+          if [ -z "$chart_tgz" ]; then
+            echo "::error::no packaged chart found in /tmp/charts"
+            exit 1
+          fi
+          echo "uploading $chart_tgz to ${CHARTMUSEUM_URL%/}"
+
+          http_code=$(curl -sS -o /tmp/cm.resp -w '%{http_code}' \
+            -u "$CHARTMUSEUM_USERNAME:$CHARTMUSEUM_PASSWORD" \
+            --data-binary "@$chart_tgz" \
+            "${CHARTMUSEUM_URL%/}/api/charts?force=true")
+          echo "ChartMuseum responded: HTTP $http_code"
+          cat /tmp/cm.resp || true
+          case "$http_code" in
+            2*) ;;
+            *) exit 1 ;;
+          esac
