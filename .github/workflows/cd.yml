@@ -2,11 +2,17 @@ name: cd
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      # TODO(MSP-46): remove this entry before merging. Temporarily included
+      # so we can validate the CD pipeline end-to-end (self-hosted runner,
+      # docker push, ChartMuseum upload) without first merging to main.
+      - dev/robert/msp-46-metrics-spec
+  workflow_dispatch:
 
-# Only one release at a time; cancel any in-flight run so the latest commit wins.
+# Only one release at a time per ref; cancel any in-flight run so the latest commit wins.
 concurrency:
-  group: cd-main
+  group: cd-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
