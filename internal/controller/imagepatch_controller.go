@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -33,6 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	omsv1alpha1 "image-patch-operator/api/v1alpha1"
+	"image-patch-operator/internal/metrics"
 )
 
 // ImagePatchReconciler reconciles a ImagePatch object
@@ -78,15 +80,18 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		l.V(1).Info("Generated Dockerfile", "content", dockerfileContent)
 
 		if err := r.createOrUpdateConfigMap(ctx, &imagePatch, cmName, dockerfileContent); err != nil {
+			metrics.RecordReconcileFailure(metrics.ReasonConfigMapApply)
 			return ctrl.Result{}, err
 		}
 
 		destination := r.resolveDestination(&imagePatch)
 		j := constructJob(&imagePatch, jobName, cmName, destination, r.KanikoImage)
 		if err := controllerutil.SetControllerReference(&imagePatch, j, r.Scheme); err != nil {
+			metrics.RecordReconcileFailure(metrics.ReasonOwnerRef)
 			return ctrl.Result{}, err
 		}
 		if err := r.Create(ctx, j); err != nil {
+			metrics.RecordReconcileFailure(metrics.ReasonJobCreate)
 			return ctrl.Result{}, err
 		}
 
@@ -94,6 +99,7 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		imagePatch.Status.JobName = jobName
 		imagePatch.Status.Image = destination
 		if err := r.Status().Update(ctx, &imagePatch); err != nil {
+			metrics.RecordReconcileFailure(metrics.ReasonStatusUpdate)
 			l.Error(err, "Failed to update ImagePatch status to Running")
 			return ctrl.Result{}, err
 		}
@@ -102,6 +108,7 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, nil
 	}
 
+	metrics.RecordReconcileFailure(metrics.ReasonGetJob)
 	return ctrl.Result{}, err
 }
 
@@ -130,13 +137,40 @@ func (r *ImagePatchReconciler) handleExistingJob(ctx context.Context, imagePatch
 		imagePatch.Status.Phase = newPhase
 		imagePatch.Status.Message = message
 		if err := r.Status().Update(ctx, imagePatch); err != nil {
+			metrics.RecordReconcileFailure(metrics.ReasonStatusUpdate)
 			l.Error(err, "Failed to update ImagePatch status", "phase", newPhase)
 			return ctrl.Result{}, err
 		}
+		recordTerminalBuild(newPhase, imagePatch.Status.Image, job)
 		l.Info("Updated ImagePatch status", "phase", newPhase)
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// recordTerminalBuild emits build metrics for a Succeeded/Failed transition.
+// Called only after the status update has succeeded, so a failed Status.Update
+// followed by a retry does not double-count. Non-terminal phases (Running) are
+// ignored.
+func recordTerminalBuild(newPhase, targetImage string, job *batchv1.Job) {
+	var result string
+	switch newPhase {
+	case "Succeeded":
+		result = metrics.ResultSucceeded
+	case "Failed":
+		result = metrics.ResultFailed
+	default:
+		return
+	}
+
+	var start, end time.Time
+	if job.Status.StartTime != nil {
+		start = job.Status.StartTime.Time
+	}
+	if job.Status.CompletionTime != nil {
+		end = job.Status.CompletionTime.Time
+	}
+	metrics.RecordBuildResult(result, targetImage, start, end)
 }
 
 // createOrUpdateConfigMap creates the ConfigMap if it doesn't exist, or updates it if it does
