@@ -3,6 +3,14 @@ FROM golang:1.25 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
+# Use China-local mirrors so module fetches and the GOTOOLCHAIN auto-download
+# (triggered when the base image's go is not the exact version in go.mod)
+# resolve quickly from inside CN. goproxy.cn is Qiniu's mirror of proxy.golang.org;
+# sum.golang.google.cn is Google's official mirror of sum.golang.org, so checksum
+# verification stays cryptographically equivalent.
+ENV GOPROXY=https://goproxy.cn,direct
+ENV GOSUMDB=sum.golang.google.cn
+
 WORKDIR /workspace
 # Copy the Go Modules manifests
 COPY go.mod go.mod
