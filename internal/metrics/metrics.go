@@ -43,7 +43,7 @@ const (
 // tens of seconds at the low end, large CUDA layers past twenty minutes at
 // the high end. Reserved for re-use by deferred phase histograms so they
 // stay comparable to build_duration_seconds.
-var buildDurationBuckets = []float64{30, 60, 120, 300, 600, 1200, 1800, 3600}
+var buildDurationBuckets = []float64{30, 60, 120, 300, 600, 1800, 3600}
 
 var (
 	buildsTotal = prometheus.NewCounterVec(

@@ -86,7 +86,7 @@ millis).
 | Name | Type | Labels | Description |
 |---|---|---|---|
 | `image_patcher_builds_total` | counter | `result`, `registry`, `image` | Image builds that reached a terminal state. Incremented once per terminal transition, never on requeues. |
-| `image_patcher_build_duration_seconds` | histogram | `result`, `registry`, `image` | Wall time from the Kaniko `Job`'s `status.startTime` to the terminal transition observed by the reconciler. Buckets: `30, 60, 120, 300, 600, 1200, 1800, 3600` seconds. By design, this equals the sum of `pull + patch + push` once those are added. |
+| `image_patcher_build_duration_seconds` | histogram | `result`, `registry`, `image` | Wall time from the Kaniko `Job`'s `status.startTime` to the terminal transition observed by the reconciler. Buckets: `30, 60, 120, 300, 600, 1800, 3600` seconds. By design, this equals the sum of `pull + patch + push` once those are added. |
 | `image_patcher_reconcile_failures_total` | counter | `reason` | Reconciler-side errors broken down by the operation that failed. Distinct from `controller_runtime_reconcile_errors_total`, which has no `reason`. |
 
 Label values:
@@ -153,12 +153,12 @@ these metrics are not emitted.
 Histograms in Prometheus cannot be re-bucketed after the fact, so we pick once:
 
 ```
-[30, 60, 120, 300, 600, 1200, 1800, 3600] seconds
+[30, 60, 120, 300, 600, 1800, 3600] seconds
 ```
 
 Rationale: most patches we care about today fall in the 60–600s range. We keep
-a few higher buckets so a slow CUDA layer rebuild doesn't all collapse into
-`+Inf`.
+a couple of higher buckets (30 min, 1 h) so a slow CUDA layer rebuild doesn't
+all collapse into `+Inf`.
 
 ## Operator vs kube-state-metrics
 
