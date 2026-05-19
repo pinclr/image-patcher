@@ -79,7 +79,11 @@ jobs:
           fi
           echo "uploading $chart_tgz to ${CHARTMUSEUM_URL%/}"
 
-          http_code=$(curl -sS -o /tmp/cm.resp -w '%{http_code}' \
+          # ChartMuseum lives on an internal IP that the runner's HTTP_PROXY
+          # doesn't know how to route, so a previous run got HTTP 503 from
+          # the proxy itself. --noproxy '*' bypasses any proxy env vars for
+          # just this request without touching the runner's other steps.
+          http_code=$(curl -sS --noproxy '*' -o /tmp/cm.resp -w '%{http_code}' \
             -u "$CHARTMUSEUM_USERNAME:$CHARTMUSEUM_PASSWORD" \
             --data-binary "@$chart_tgz" \
             "${CHARTMUSEUM_URL%/}/api/charts?force=true")
