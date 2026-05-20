@@ -51,11 +51,51 @@ type ImagePatchSpec struct {
 	// Shell
 	Shell []ShellStep `json:"shell,omitempty"`
 
+	// FromImages declares additional source images for multi-stage builds.
+	// Each entry becomes a `FROM <image> AS <name>` stage at the top of the
+	// generated Dockerfile. Use Copy to emit `COPY --from=<name> <src> <dst>`
+	// lines that pull files into the final image.
+	// +optional
+	FromImages []FromImage `json:"fromImages,omitempty"`
+
 	// User
 	User *UserConfig `json:"user,omitempty"`
 
 	Entrypoint []string `json:"entrypoint,omitempty"`
 	CMD        []string `json:"cmd,omitempty"`
+}
+
+// FromImage declares a multi-stage build source. The image is pulled
+// only to satisfy COPY --from references; nothing from it survives in
+// the final image unless an explicit Copy entry references it.
+type FromImage struct {
+	// Image is the OCI reference used as a build stage source.
+	// Emitted as `FROM <image> AS <name>`.
+	// +kubebuilder:validation:Required
+	Image string `json:"image"`
+
+	// Name is the stage alias referenced by COPY --from=<name>.
+	// Must be a valid Dockerfile stage identifier.
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
+
+	// Copy lists files or directories to pull from this stage into
+	// the final image. Each entry is emitted as
+	// `COPY --from=<name> <src> <dst>` after the patch's RUN steps.
+	// +optional
+	Copy []CopySpec `json:"copy,omitempty"`
+}
+
+// CopySpec describes a single COPY --from operation.
+type CopySpec struct {
+	// Src is the source path inside the FromImage's filesystem.
+	// +kubebuilder:validation:Required
+	Src string `json:"src"`
+
+	// Dst is the destination path in the final image. Defaults to Src
+	// when omitted.
+	// +optional
+	Dst string `json:"dst,omitempty"`
 }
 
 type AptConfig struct {

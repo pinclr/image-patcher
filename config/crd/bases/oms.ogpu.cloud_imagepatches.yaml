@@ -69,6 +69,54 @@ spec:
                   type: string
                 description: Env
                 type: object
+              fromImages:
+                description: |-
+                  FromImages declares additional source images for multi-stage builds.
+                  Each entry becomes a `FROM <image> AS <name>` stage at the top of the
+                  generated Dockerfile. Use Copy to emit `COPY --from=<name> <src> <dst>`
+                  lines that pull files into the final image.
+                items:
+                  description: |-
+                    FromImage declares a multi-stage build source. The image is pulled
+                    only to satisfy COPY --from references; nothing from it survives in
+                    the final image unless an explicit Copy entry references it.
+                  properties:
+                    copy:
+                      description: |-
+                        Copy lists files or directories to pull from this stage into
+                        the final image. Each entry is emitted as
+                        `COPY --from=<name> <src> <dst>` after the patch's RUN steps.
+                      items:
+                        description: CopySpec describes a single COPY --from operation.
+                        properties:
+                          dst:
+                            description: |-
+                              Dst is the destination path in the final image. Defaults to Src
+                              when omitted.
+                            type: string
+                          src:
+                            description: Src is the source path inside the FromImage's
+                              filesystem.
+                            type: string
+                        required:
+                        - src
+                        type: object
+                      type: array
+                    image:
+                      description: |-
+                        Image is the OCI reference used as a build stage source.
+                        Emitted as `FROM <image> AS <name>`.
+                      type: string
+                    name:
+                      description: |-
+                        Name is the stage alias referenced by COPY --from=<name>.
+                        Must be a valid Dockerfile stage identifier.
+                      type: string
+                  required:
+                  - image
+                  - name
+                  type: object
+                type: array
               pip:
                 description: Pip
                 properties:
