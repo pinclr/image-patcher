@@ -167,6 +167,45 @@ metrics:
     tlsConfig:
       insecureSkipVerify: true
 
+# Healthcheck (canary) CronJob. When enabled, submits a single noop
+# ImagePatch on a schedule and polls its status until terminal. Exercises
+# the full pipeline (base pull, Dockerfile generation, Kaniko build,
+# registry push, RWX pull-cache mount) without depending on external
+# package mirrors. Results surface through the existing controller
+# metrics -- builds_total / build_duration_seconds / failure_reason on
+# CRs whose image label matches the targetImage path.
+#
+# Successful runs delete their CR immediately; failed runs are retained
+# for failureRetentionSeconds so the build Job + Pod logs can be
+# inspected before the next tick garbage-collects them.
+healthcheck:
+  enabled: false
+  # Default: every 10 minutes. Each run costs one short build slot.
+  schedule: "*/10 * * * *"
+  # Tiny image with kubectl + /bin/sh. Pinned to a kubectl version
+  # within one minor of the cluster API server to be safe. The default
+  # uses Rancher's public mirror because the previously-conventional
+  # `bitnami/kubectl` tag was retired when Bitnami moved free images
+  # to bitnamilegacy/. Override for air-gapped clusters.
+  image: rancher/kubectl:v1.31.0
+  # noop test case spec. baseImage is intentionally small and ubiquitous
+  # so the canary doesn't depend on package mirrors. targetImage uses a
+  # stable tag, overwritten each run, so the registry doesn't accumulate
+  # canary artifacts. Leave targetImage empty to fall back to
+  # DEFAULT_IMAGE_REGISTRY-derived naming inside the controller.
+  baseImage: alpine:3.20
+  targetImage: ""
+  # Polling timeout for the submitted CR to reach Succeeded/Failed.
+  # Exceeded -> the probe Job exits with code 2 (TIMEOUT distinct from
+  # build failure code 1).
+  timeoutSeconds: 600
+  # Failed canary CRs are kept for this long for debugging, then GC'd
+  # by the next tick.
+  failureRetentionSeconds: 21600
+  # Upper bound on the probe Job's own runtime, slightly above
+  # timeoutSeconds to allow for startup / cleanup.
+  activeDeadlineSeconds: 900
+
 # Grafana dashboard provisioning.
 # When enabled, the chart renders a ConfigMap carrying the bundled
 # dashboard JSON (charts/image-patcher/dashboards/image-patcher.json).

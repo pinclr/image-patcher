@@ -1,0 +1,52 @@
+{{- if .Values.healthcheck.enabled -}}
+# RBAC for the healthcheck CronJob. Scoped to the release namespace --
+# the canary only ever creates ImagePatch CRs in its own namespace.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "image-patcher.fullname" . }}-healthcheck
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "image-patcher.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "image-patcher.fullname" . }}-healthcheck
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "image-patcher.labels" . | nindent 4 }}
+rules:
+  # The canary submits a CR, polls its status, and deletes it when done.
+  # `patch` is needed because the probe annotates the CR each poll tick
+  # to force a fresh reconcile (workaround for the cross-namespace
+  # Owns(&Job) gap). No status subresource verbs -- only the controller
+  # updates status.
+  - apiGroups:
+      - oms.ogpu.cloud
+    resources:
+      - imagepatches
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - delete
+      - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "image-patcher.fullname" . }}-healthcheck
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "image-patcher.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "image-patcher.fullname" . }}-healthcheck
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "image-patcher.fullname" . }}-healthcheck
+    namespace: {{ .Release.Namespace }}
+{{- end }}
