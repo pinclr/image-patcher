@@ -1,0 +1,67 @@
+{{- if and .Values.kaniko.pullCache.enabled .Values.kaniko.pullCache.cleanup.enabled -}}
+# Pull-cache cleanup CronJob: Kaniko never evicts entries from --cache-dir,
+# so the PVC fills up over time. This Job mounts the same PVC and deletes
+# files older than .Values.kaniko.pullCache.cleanup.maxAgeDays (by mtime).
+# Cache entries are independent layer blobs keyed by digest -- evicting any
+# one just causes the next build to re-pull it, so deletion is always safe.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "image-patcher.fullname" . }}-kaniko-pull-cache-cleanup
+  # Must live alongside the PVC -- same namespace selection as pvc-kaniko-pull-cache.yaml.
+  namespace: {{ default .Release.Namespace .Values.config.buildNamespace }}
+  labels:
+    {{- include "image-patcher.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.kaniko.pullCache.cleanup.schedule | quote }}
+  # Forbid: if the previous run is still going (huge cache, slow CephFS),
+  # skip this tick rather than piling on concurrent deletes.
+  concurrencyPolicy: {{ .Values.kaniko.pullCache.cleanup.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ .Values.kaniko.pullCache.cleanup.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.kaniko.pullCache.cleanup.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            {{- include "image-patcher.selectorLabels" . | nindent 12 }}
+        spec:
+          restartPolicy: OnFailure
+          # Kaniko writes cache files as root; cleanup must run as root too
+          # to be able to unlink them. Capabilities are still dropped.
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+          containers:
+            - name: cleanup
+              image: {{ .Values.kaniko.pullCache.cleanup.image | quote }}
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  echo "Cleaning {{ .Values.kaniko.pullCache.mountPath }}: removing files with mtime > {{ .Values.kaniko.pullCache.cleanup.maxAgeDays }} days"
+                  find {{ .Values.kaniko.pullCache.mountPath }} -type f -mtime +{{ .Values.kaniko.pullCache.cleanup.maxAgeDays }} -print -delete
+                  echo "Done."
+              volumeMounts:
+                - name: cache
+                  mountPath: {{ .Values.kaniko.pullCache.mountPath }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  cpu: 200m
+                  memory: 128Mi
+          volumes:
+            - name: cache
+              persistentVolumeClaim:
+                claimName: {{ default (printf "%s-kaniko-pull-cache" (include "image-patcher.fullname" .)) .Values.kaniko.pullCache.existingClaim }}
+{{- end }}

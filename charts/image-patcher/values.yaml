@@ -49,9 +49,12 @@ kaniko:
   # layers persist across builds. PVC lifecycle is tied to the chart release,
   # not any individual ImagePatch CR.
   #
-  # The PVC is ReadWriteOnce, so concurrent ImagePatch builds serialize on
-  # the volume. For clusters with frequent parallel patches, point
-  # existingClaim at a ReadWriteMany PVC backed by NFS / CephFS.
+  # The chart-managed PVC is created as ReadWriteMany so multiple build Jobs
+  # (one per concurrently reconciled ImagePatch CR) can share it across
+  # nodes. storageClassName must therefore reference a class that supports
+  # RWX -- CephFS, NFS, Azure Files, EFS, etc. To bring your own PVC (any
+  # access mode you want), set existingClaim and the chart will skip
+  # creating one.
   pullCache:
     enabled: false
     # If set, the controller mounts this existing PVC (chart skips creating one).
@@ -59,6 +62,22 @@ kaniko:
     size: 100Gi
     storageClassName: ""
     mountPath: /cache
+    # Cleanup: periodic CronJob that deletes cache files older than
+    # maxAgeDays (by mtime). Kaniko never evicts entries itself, so the
+    # PVC fills up over time. The Job mounts the same PVC, runs in the
+    # same namespace, and only exists when pullCache.enabled is true.
+    cleanup:
+      enabled: false
+      # Cron expression. Default: daily at 03:15 (off-peak).
+      schedule: "15 3 * * *"
+      # Delete cache files whose mtime is older than this many days.
+      maxAgeDays: 30
+      # Any image with /bin/sh + find is fine; busybox is ~5MB.
+      image: busybox:1.36
+      # Forbid: skip the run if a previous one is still cleaning.
+      concurrencyPolicy: Forbid
+      successfulJobsHistoryLimit: 1
+      failedJobsHistoryLimit: 1
 
   # Build cache: container registry where Kaniko caches the result of each
   # intermediate RUN layer. Independent from pullCache above; both can be

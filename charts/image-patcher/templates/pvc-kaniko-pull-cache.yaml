@@ -18,8 +18,13 @@ metadata:
   annotations:
     helm.sh/resource-policy: keep
 spec:
+  # ReadWriteMany is required: the controller may run multiple build Jobs
+  # concurrently (one per ImagePatch CR being reconciled) and they all mount
+  # this same PVC. RWO would fail as soon as two Jobs land on different nodes.
+  # storageClassName must therefore point at a class that supports RWX
+  # (CephFS, NFS, Azure Files, EFS, etc.).
   accessModes:
-    - ReadWriteOnce
+    - ReadWriteMany
   {{- with .Values.kaniko.pullCache.storageClassName }}
   storageClassName: {{ . | quote }}
   {{- end }}
