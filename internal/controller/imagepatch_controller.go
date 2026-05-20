@@ -140,12 +140,27 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 
 		l.Info("Job created successfully", "job", jobName)
-		return ctrl.Result{}, nil
+		// The newly created Job is in another namespace whenever
+		// BuildNamespace differs from the CR's namespace. Owns(&Job{}) in
+		// SetupWithManager only delivers events for Jobs in namespaces the
+		// manager watches with cross-namespace cache scopes, which we
+		// don't enable -- so the controller would otherwise never see the
+		// terminal Job transition. Requeue at a fixed cadence to poll the
+		// Job's status. Cheap: cached client List, no API round-trip.
+		return ctrl.Result{RequeueAfter: runningPhaseRequeueAfter}, nil
 	}
 
 	metrics.RecordReconcileFailure(metrics.ReasonGetJob)
 	return ctrl.Result{}, err
 }
+
+// runningPhaseRequeueAfter is the period at which the reconciler re-checks
+// an in-flight build when its Job lives in a different namespace than the
+// CR. Short enough that the canary's 10-minute timeout has plenty of room
+// to observe completion; long enough that idle Pods don't churn through
+// the workqueue. Same cadence applies to the Pending case (Job created,
+// no status counters yet).
+const runningPhaseRequeueAfter = 15 * time.Second
 
 // handleExistingJob handles the case when the Job already exists
 func (r *ImagePatchReconciler) handleExistingJob(ctx context.Context, imagePatch *omsv1alpha1.ImagePatch, job *batchv1.Job) (ctrl.Result, error) {
@@ -164,8 +179,10 @@ func (r *ImagePatchReconciler) handleExistingJob(ctx context.Context, imagePatch
 		newPhase = "Running"
 		message = "Build is running"
 	} else {
-		// Job exists but no status yet, still pending
-		return ctrl.Result{}, nil
+		// Job exists but no status yet, still pending. Requeue so we keep
+		// observing -- same cross-namespace caveat as the freshly-created
+		// case.
+		return ctrl.Result{RequeueAfter: runningPhaseRequeueAfter}, nil
 	}
 
 	if imagePatch.Status.Phase != newPhase {
@@ -180,6 +197,13 @@ func (r *ImagePatchReconciler) handleExistingJob(ctx context.Context, imagePatch
 		l.Info("Updated ImagePatch status", "phase", newPhase)
 	}
 
+	// Terminal phases need no requeue; the CR is done. While Running, we
+	// keep polling -- with same-namespace Owns(&Job{}), the watch usually
+	// fires first and short-circuits the wait, so this is mostly a safety
+	// net. For cross-namespace builds it's the only signal we have.
+	if newPhase == "Running" {
+		return ctrl.Result{RequeueAfter: runningPhaseRequeueAfter}, nil
+	}
 	return ctrl.Result{}, nil
 }
 
