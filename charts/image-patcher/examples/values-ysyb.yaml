@@ -26,6 +26,14 @@ kaniko:
   pullCache:
     enabled: true
 
+  # Build cache: container registry repo where Kaniko caches the result
+  # of each intermediate RUN layer. Independent from pullCache above —
+  # both are on. Multi-node safe; storage is the registry's problem,
+  # not ours.
+  buildCache:
+    enabled: true
+    repo: registry.luna.ogpu.cloud/image-patch-system/kaniko-build-cache
+
 config:
   defaultImageRegistry: registry.luna.ogpu.cloud/patched-images
   # All Kaniko build Jobs (and the chart-managed pull-cache PVC) land in
