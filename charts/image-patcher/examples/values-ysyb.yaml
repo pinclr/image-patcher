@@ -23,6 +23,12 @@ kaniko:
   # layers persist across builds. Chart creates a 100Gi RWO PVC on the
   # cluster default storage class, in the same namespace as the build
   # Jobs (controlled by config.buildNamespace below).
+  buildCache:
+    enabled: true
+    repo: registry.luna.ogpu.cloud/image-patch-system/kaniko-build-cache
+  image:
+    registry: registry.luna.ogpu.cloud
+    repository: image-patch-system/kaniko-executor
   pullCache:
     enabled: true
 

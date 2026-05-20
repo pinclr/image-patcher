@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"fmt"
 	"testing"
 
 	v1alpha1 "image-patch-operator/api/v1alpha1"
@@ -17,5 +16,27 @@ func TestDockerfileGenMirror(t *testing.T) {
 			},
 		},
 	}
-	fmt.Println(GenerateDockerfile(cr))
+
+	got := GenerateDockerfile(cr)
+
+	want := `FROM ubuntu:24.04
+
+SHELL ["/bin/sh", "-c"]
+
+RUN . /etc/os-release && echo "deb http://10.11.32.173/ubuntu $VERSION_CODENAME main restricted universe multiverse\n\
+deb http://10.11.32.173/ubuntu $VERSION_CODENAME-updates main restricted universe multiverse\n\
+deb http://10.11.32.173/ubuntu $VERSION_CODENAME-security main restricted universe multiverse\n\
+deb http://10.11.32.173/ubuntu $VERSION_CODENAME-backports main restricted universe multiverse\n\
+" > /etc/apt/sources.list
+
+RUN apt-get update && apt-get install -y \
+    tini \
+    podman \
+    && rm -rf /var/lib/apt/lists/*
+
+`
+
+	if got != want {
+		t.Errorf("Dockerfile mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
 }

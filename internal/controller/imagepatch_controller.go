@@ -375,6 +375,11 @@ func GenerateDockerfile(cr *omsv1alpha1.ImagePatch) string {
 	// FROM - base image
 	sb.WriteString(fmt.Sprintf("FROM %s\n\n", cr.Spec.BaseImage))
 
+	// SHELL - pin to absolute /bin/sh so subsequent RUNs work even when the
+	// base image set SHELL to something kaniko can't resolve via PATH (e.g.
+	// ["sh", "-lc"] on a minimal image without /bin in PATH).
+	sb.WriteString("SHELL [\"/bin/sh\", \"-c\"]\n\n")
+
 	// ENV - environment variables
 	if len(cr.Spec.ENV) > 0 {
 		for k, v := range cr.Spec.ENV {
