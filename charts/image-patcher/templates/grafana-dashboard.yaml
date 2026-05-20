@@ -1,0 +1,28 @@
+{{- if .Values.dashboards.enabled -}}
+# Grafana dashboard ConfigMap.
+#
+# kube-prometheus-stack ships a kiwigrid/k8s-sidecar container that
+# watches all namespaces for ConfigMaps carrying a configurable label
+# (default `grafana_dashboard: "1"`). When it sees one, it drops the
+# data files into Grafana's provisioning directory and POSTs a reload
+# -- the dashboard appears in Grafana within seconds without restart
+# or manual import.
+#
+# Lives in the chart release namespace; the sidecar's NAMESPACE=ALL
+# (verified on ysyb) makes cross-namespace pickup automatic.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "image-patcher.fullname" . }}-grafana-dashboard
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "image-patcher.labels" . | nindent 4 }}
+    {{ .Values.dashboards.label.key }}: {{ .Values.dashboards.label.value | quote }}
+  {{- with .Values.dashboards.folderAnnotation }}
+  annotations:
+    grafana_folder: {{ . | quote }}
+  {{- end }}
+data:
+  image-patcher.json: |
+{{ .Files.Get "dashboards/image-patcher.json" | indent 4 }}
+{{- end }}

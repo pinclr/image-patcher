@@ -188,12 +188,14 @@ func (r *ImagePatchReconciler) handleExistingJob(ctx context.Context, imagePatch
 // followed by a retry does not double-count. Non-terminal phases (Running) are
 // ignored.
 func recordTerminalBuild(newPhase, targetImage string, job *batchv1.Job) {
-	var result string
+	var result, failureReason string
 	switch newPhase {
 	case "Succeeded":
 		result = metrics.ResultSucceeded
+		failureReason = metrics.FailureReasonNone
 	case "Failed":
 		result = metrics.ResultFailed
+		failureReason = jobFailureReason(job)
 	default:
 		return
 	}
@@ -205,7 +207,28 @@ func recordTerminalBuild(newPhase, targetImage string, job *batchv1.Job) {
 	if job.Status.CompletionTime != nil {
 		end = job.Status.CompletionTime.Time
 	}
-	metrics.RecordBuildResult(result, targetImage, start, end)
+	metrics.RecordBuildResult(result, targetImage, failureReason, start, end)
+}
+
+// jobFailureReason classifies a failed build into one of the bounded
+// metrics.FailureReason* values by inspecting Job conditions. We don't
+// currently look at Pod-level termination state (e.g. OOMKilled) because
+// it would require watching Pods in the manager cache; everything that
+// isn't a Job-level reason (DeadlineExceeded / BackoffLimitExceeded)
+// rolls up into FailureReasonBuild — i.e. "the build itself failed".
+func jobFailureReason(job *batchv1.Job) string {
+	for _, c := range job.Status.Conditions {
+		if c.Status != corev1.ConditionTrue {
+			continue
+		}
+		switch c.Reason {
+		case "DeadlineExceeded":
+			return metrics.FailureReasonDeadline
+		case "BackoffLimitExceeded":
+			return metrics.FailureReasonBackoff
+		}
+	}
+	return metrics.FailureReasonBuild
 }
 
 // buildNamespaceFor returns the namespace in which build resources (Job +

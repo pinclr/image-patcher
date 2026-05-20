@@ -37,6 +37,26 @@ const (
 	ReasonStatusUpdate   = "status_update"
 	ReasonOwnerRef       = "owner_ref"
 	ReasonGetJob         = "get_job"
+
+	// FailureReason* are the bounded set of values for the failure_reason
+	// label on image_patcher_builds_total. Succeeded transitions always
+	// record FailureReasonNone so the label cardinality stays predictable.
+	// Anything not matching a specific Job condition reason falls into
+	// FailureReasonBuildError -- the bucket where actual Kaniko build
+	// failures end up.
+	FailureReasonNone     = "none"
+	FailureReasonDeadline = "deadline_exceeded"
+	FailureReasonBackoff  = "backoff_limit_exceeded"
+	FailureReasonBuild    = "build_error"
+
+	// PhaseLabel* are the canonical phase strings used as label values on
+	// image_patcher_imagepatches. Mirrors what the controller writes into
+	// ImagePatch.Status.Phase, with the empty / unset case normalized to
+	// "Pending" so consumers don't need a special-case query for "".
+	PhasePending   = "Pending"
+	PhaseRunning   = "Running"
+	PhaseSucceeded = "Succeeded"
+	PhaseFailed    = "Failed"
 )
 
 // buildDurationBuckets is tuned for image-build workloads: apt installs in
@@ -50,9 +70,9 @@ var (
 		prometheus.CounterOpts{
 			Namespace: namespace,
 			Name:      "builds_total",
-			Help:      "Image builds that reached a terminal state, by result and target image.",
+			Help:      "Image builds that reached a terminal state, by result, target image, and failure reason (none for successes).",
 		},
-		[]string{"result", "registry", "image"},
+		[]string{"result", "registry", "image", "failure_reason"},
 	)
 
 	buildDurationSeconds = prometheus.NewHistogramVec(
@@ -73,6 +93,23 @@ var (
 		},
 		[]string{"reason"},
 	)
+
+	activeBuilds = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "active_builds",
+			Help:      "ImagePatch CRs currently in the Running phase (build in flight).",
+		},
+	)
+
+	imagePatches = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "imagepatches",
+			Help:      "ImagePatch CRs in the cluster, broken down by phase (snapshot, refreshed periodically).",
+		},
+		[]string{"phase"},
+	)
 )
 
 func init() {
@@ -80,6 +117,8 @@ func init() {
 		buildsTotal,
 		buildDurationSeconds,
 		reconcileFailuresTotal,
+		activeBuilds,
+		imagePatches,
 	)
 }
 
@@ -87,14 +126,22 @@ func init() {
 // invoke this on the *transition* into a terminal phase (the reconciler's
 // existing "phase changed" guard), so requeues never double-count.
 //
+// failureReason is a bounded enum (FailureReason* constants); pass
+// FailureReasonNone for successes. The duration histogram does not carry
+// the failure_reason label since it would inflate cardinality without much
+// query value.
+//
 // If startTime is zero (the kubelet has not stamped Job.Status.StartTime
 // yet), the duration observation is skipped to avoid recording a misleading
 // near-zero value; the counter still increments.
-func RecordBuildResult(result, targetImage string, startTime, endTime time.Time) {
+func RecordBuildResult(result, targetImage, failureReason string, startTime, endTime time.Time) {
 	registry, image := SplitImageRef(targetImage)
-	labels := prometheus.Labels{"result": result, "registry": registry, "image": image}
-
-	buildsTotal.With(labels).Inc()
+	buildsTotal.With(prometheus.Labels{
+		"result":         result,
+		"registry":       registry,
+		"image":          image,
+		"failure_reason": failureReason,
+	}).Inc()
 
 	if startTime.IsZero() {
 		return
@@ -102,7 +149,11 @@ func RecordBuildResult(result, targetImage string, startTime, endTime time.Time)
 	if endTime.IsZero() {
 		endTime = time.Now()
 	}
-	buildDurationSeconds.With(labels).Observe(endTime.Sub(startTime).Seconds())
+	buildDurationSeconds.With(prometheus.Labels{
+		"result":   result,
+		"registry": registry,
+		"image":    image,
+	}).Observe(endTime.Sub(startTime).Seconds())
 }
 
 // RecordReconcileFailure increments the reconciler failure counter for a
@@ -110,6 +161,16 @@ func RecordBuildResult(result, targetImage string, startTime, endTime time.Time)
 // this package — free-form strings would unbound label cardinality.
 func RecordReconcileFailure(reason string) {
 	reconcileFailuresTotal.WithLabelValues(reason).Inc()
+}
+
+// SetImagePatchesByPhase publishes a snapshot of CR counts grouped by
+// Status.Phase. Zero-valued phases are still written so a phase that
+// drained to zero (e.g. no more Failed CRs) doesn't keep stale samples.
+func SetImagePatchesByPhase(counts map[string]int) {
+	for _, p := range []string{PhasePending, PhaseRunning, PhaseSucceeded, PhaseFailed} {
+		imagePatches.WithLabelValues(p).Set(float64(counts[p]))
+	}
+	activeBuilds.Set(float64(counts[PhaseRunning]))
 }
 
 // SplitImageRef parses a fully-qualified image reference into (registry,

@@ -37,6 +37,7 @@ import (
 
 	omsv1alpha1 "image-patch-operator/api/v1alpha1"
 	"image-patch-operator/internal/controller"
+	"image-patch-operator/internal/metrics"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -202,6 +203,14 @@ func main() {
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
+
+	// Periodic CR-phase gauges live outside the reconcile loop because
+	// per-CR reconciles only refresh the gauge for the CR being reconciled
+	// -- a fully idle cluster would never re-publish them.
+	if err := mgr.Add(&metrics.PhaseAggregator{Client: mgr.GetClient()}); err != nil {
+		setupLog.Error(err, "unable to register phase aggregator")
+		os.Exit(1)
+	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")
