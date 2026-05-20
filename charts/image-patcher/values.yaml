@@ -59,7 +59,7 @@ kaniko:
     enabled: false
     # If set, the controller mounts this existing PVC (chart skips creating one).
     existingClaim: ""
-    size: 100Gi
+    size: 10Gi
     storageClassName: ""
     mountPath: /cache
     # Cleanup: periodic CronJob that deletes cache files older than
@@ -166,6 +166,24 @@ metrics:
     # [METRICS-WITH-CERTS] TODO in cmd/main.go).
     tlsConfig:
       insecureSkipVerify: true
+
+# Grafana dashboard provisioning.
+# When enabled, the chart renders a ConfigMap carrying the bundled
+# dashboard JSON (charts/image-patcher/dashboards/image-patcher.json).
+# kube-prometheus-stack's grafana-sc-dashboard sidecar watches all
+# namespaces for the configured label and imports the dashboard
+# automatically -- no Grafana restart, no manual import. The label
+# defaults (grafana_dashboard=1) match kube-prometheus-stack out of
+# the box; override if your sidecar is configured differently.
+dashboards:
+  enabled: false
+  label:
+    key: grafana_dashboard
+    value: "1"
+  # If set, written as `grafana_folder: <value>` annotation -- some
+  # sidecar configs use this to place the dashboard in a named folder.
+  # Leave empty to land in the default folder.
+  folderAnnotation: ""
 
 # Extra args appended to the controller command line.
 extraArgs: []

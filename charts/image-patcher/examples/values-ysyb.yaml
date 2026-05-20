@@ -65,3 +65,9 @@ metrics:
       serviceAccount:
         name: k8s-prometheus
         namespace: monitoring
+
+# kube-prometheus-stack grafana sidecar runs with NAMESPACE=ALL and the
+# default label (grafana_dashboard=1), so the bundled dashboard
+# ConfigMap is picked up automatically from this release's namespace.
+dashboards:
+  enabled: true
