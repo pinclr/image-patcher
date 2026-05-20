@@ -1,0 +1,105 @@
+# Flux HelmRelease for the image-patcher chart, sourced from the in-cluster
+# ChartMuseum at http://10.11.32.176:8080. The .spec.values block mirrors
+# charts/image-patcher/examples/values-ysyb.yaml so this manifest and the
+# direct `helm upgrade -f values-ysyb.yaml` path produce equivalent releases.
+#
+# Apply in order: Secret, HelmRepository, HelmRelease (a single
+# `kubectl apply -f` handles them since Flux retries until dependencies
+# resolve).
+#
+# Out-of-band prerequisites:
+#   - Flux v2 installed (source-controller + helm-controller); confirmed on
+#     this cluster via `kubectl api-resources --api-group=helm.toolkit.fluxcd.io`.
+#   - The chartmuseum-auth Secret carries the basic-auth creds matching the
+#     server's BASIC_AUTH_USER / BASIC_AUTH_PASS env. Replace the stringData
+#     below with your real values — or, preferred, swap this Secret for a
+#     SealedSecret / ExternalSecret reference so the password is not checked
+#     into git.
+#   - The image at .Values.image.registry/...:v0.1.5 must already be pushed.
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: chartmuseum-auth
+  namespace: image-patch-system
+type: Opaque
+stringData:
+  username: admin
+  password: REPLACE_ME
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: image-patcher
+  namespace: image-patch-system
+spec:
+  interval: 5m
+  url: http://10.11.32.176:8080
+  secretRef:
+    name: chartmuseum-auth
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: image-patch
+  namespace: image-patch-system
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: image-patcher
+      # Pin a specific version. Use a semver range like ">=0.1.0 <0.2.0"
+      # for auto-upgrades within a minor band.
+      version: 0.1.5
+      sourceRef:
+        kind: HelmRepository
+        name: image-patcher
+        namespace: image-patch-system
+      interval: 1m
+  install:
+    # The chart asserts .Release.Namespace == image-patch-system at render
+    # time. Letting Flux create the namespace makes this manifest standalone:
+    # `kubectl apply -f` works on a cluster that doesn't have the namespace
+    # yet. Set to false if the namespace is managed elsewhere.
+    createNamespace: true
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+      strategy: rollback
+  values:
+    image:
+      registry: registry.luna.ogpu.cloud
+      # repository defaults to image-patch-system/image-patch-operator
+      # tag defaults to .Chart.AppVersion (v0.1.5 for chart 0.1.5)
+    kaniko:
+      image:
+        registry: registry.luna.ogpu.cloud
+        repository: image-patch-system/kaniko-executor
+      # Pull cache: PVC mounted as Kaniko's --cache-dir. Caches pulled
+      # base-image layers across ImagePatch builds. The chart creates the
+      # PVC (size below) since we don't set existingClaim.
+      pullCache:
+        enabled: true
+        size: 100Gi
+        # storageClassName: ""   # leave empty for cluster default
+      # Build cache: registry repo for Kaniko's intermediate RUN-layer cache.
+      # The repo path must already exist (or be auto-created) on the registry.
+      buildCache:
+        enabled: true
+        repo: registry.luna.ogpu.cloud/image-patch-system/kaniko-build-cache
+    config:
+      defaultImageRegistry: registry.luna.ogpu.cloud/patched-images
+    # Prometheus Operator scrape config. The ysyb cluster runs kps with a
+    # custom Prometheus SA name and the standard release-label selector;
+    # both overrides go in here instead of relying on chart defaults.
+    metrics:
+      serviceMonitor:
+        enabled: true
+        labels:
+          release: kube-prometheus-stack
+        prometheus:
+          serviceAccount:
+            name: k8s-prometheus
+            namespace: monitoring

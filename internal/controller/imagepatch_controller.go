@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -33,6 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	omsv1alpha1 "image-patch-operator/api/v1alpha1"
+	"image-patch-operator/internal/metrics"
 )
 
 // ImagePatchReconciler reconciles a ImagePatch object
@@ -41,6 +43,31 @@ type ImagePatchReconciler struct {
 	Scheme          *runtime.Scheme
 	DefaultRegistry string
 	KanikoImage     string
+	// BuildNamespace, when set, is where Kaniko build Jobs and their
+	// supporting ConfigMaps are created — regardless of which namespace the
+	// ImagePatch CR itself lives in. Empty preserves the legacy
+	// same-namespace behavior. Cross-namespace OwnerReferences are not
+	// allowed by Kubernetes, so when BuildNamespace differs from the CR's
+	// namespace the controller skips SetControllerReference and instead
+	// stamps the Job / ConfigMap with labels:
+	//   imagepatch.source.name
+	//   imagepatch.source.namespace
+	// for traceability. Cleanup on CR deletion becomes the user's
+	// responsibility in that mode.
+	BuildNamespace string
+	// KanikoPullCachePVC, when set, is the name of a PVC (in the same
+	// namespace as the ImagePatch) the controller mounts into every Kaniko
+	// build Job at KanikoPullCacheMountPath. Kaniko is then invoked with
+	// --cache-dir=<mountPath> so pulled base-image layers persist across
+	// builds. The PVC is managed by the chart (or pre-provisioned by an
+	// admin) — its lifecycle is independent of any single ImagePatch.
+	KanikoPullCachePVC       string
+	KanikoPullCacheMountPath string
+	// KanikoBuildCacheRepo, when set, is passed to Kaniko as --cache-repo
+	// for the build/layer cache (intermediate RUN steps cached in a
+	// container registry). Independent from the local pull cache PVC above;
+	// both can be enabled at once.
+	KanikoBuildCacheRepo string
 }
 
 // +kubebuilder:rbac:groups=oms.ogpu.cloud,resources=imagepatches,verbs=get;list;watch;create;update;patch;delete
@@ -64,29 +91,42 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	jobName := imagePatch.Name + "-build-job"
 	cmName := imagePatch.Name + "-dockerfile"
+	buildNs := r.buildNamespaceFor(&imagePatch)
+	crossNamespace := buildNs != imagePatch.Namespace
 
 	var job batchv1.Job
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: imagePatch.Namespace}, &job)
+	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: buildNs}, &job)
 	if err == nil {
 		return r.handleExistingJob(ctx, &imagePatch, &job)
 	}
 
 	if errors.IsNotFound(err) {
-		l.Info("Creating new build resources", "ImagePatch", imagePatch.Name)
+		l.Info("Creating new build resources", "ImagePatch", imagePatch.Name, "buildNamespace", buildNs)
 
 		dockerfileContent := GenerateDockerfile(&imagePatch)
 		l.V(1).Info("Generated Dockerfile", "content", dockerfileContent)
 
-		if err := r.createOrUpdateConfigMap(ctx, &imagePatch, cmName, dockerfileContent); err != nil {
+		if err := r.createOrUpdateConfigMap(ctx, &imagePatch, cmName, buildNs, dockerfileContent); err != nil {
+			metrics.RecordReconcileFailure(metrics.ReasonConfigMapApply)
 			return ctrl.Result{}, err
 		}
 
 		destination := r.resolveDestination(&imagePatch)
-		j := constructJob(&imagePatch, jobName, cmName, destination, r.KanikoImage)
-		if err := controllerutil.SetControllerReference(&imagePatch, j, r.Scheme); err != nil {
-			return ctrl.Result{}, err
+		j := constructJob(&imagePatch, jobName, cmName, buildNs, destination, r.KanikoImage,
+			r.KanikoPullCachePVC, r.KanikoPullCacheMountPath, r.KanikoBuildCacheRepo)
+		// Owner references must live in the same namespace as the dependent
+		// (Kubernetes GC rejects cross-namespace ownership). When the build
+		// namespace matches the CR's namespace, set the controller reference
+		// for automatic cleanup; otherwise rely on the source labels for
+		// traceability and leave cleanup to the user.
+		if !crossNamespace {
+			if err := controllerutil.SetControllerReference(&imagePatch, j, r.Scheme); err != nil {
+				metrics.RecordReconcileFailure(metrics.ReasonOwnerRef)
+				return ctrl.Result{}, err
+			}
 		}
 		if err := r.Create(ctx, j); err != nil {
+			metrics.RecordReconcileFailure(metrics.ReasonJobCreate)
 			return ctrl.Result{}, err
 		}
 
@@ -94,6 +134,7 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		imagePatch.Status.JobName = jobName
 		imagePatch.Status.Image = destination
 		if err := r.Status().Update(ctx, &imagePatch); err != nil {
+			metrics.RecordReconcileFailure(metrics.ReasonStatusUpdate)
 			l.Error(err, "Failed to update ImagePatch status to Running")
 			return ctrl.Result{}, err
 		}
@@ -102,6 +143,7 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, nil
 	}
 
+	metrics.RecordReconcileFailure(metrics.ReasonGetJob)
 	return ctrl.Result{}, err
 }
 
@@ -130,39 +172,94 @@ func (r *ImagePatchReconciler) handleExistingJob(ctx context.Context, imagePatch
 		imagePatch.Status.Phase = newPhase
 		imagePatch.Status.Message = message
 		if err := r.Status().Update(ctx, imagePatch); err != nil {
+			metrics.RecordReconcileFailure(metrics.ReasonStatusUpdate)
 			l.Error(err, "Failed to update ImagePatch status", "phase", newPhase)
 			return ctrl.Result{}, err
 		}
+		recordTerminalBuild(newPhase, imagePatch.Status.Image, job)
 		l.Info("Updated ImagePatch status", "phase", newPhase)
 	}
 
 	return ctrl.Result{}, nil
 }
 
+// recordTerminalBuild emits build metrics for a Succeeded/Failed transition.
+// Called only after the status update has succeeded, so a failed Status.Update
+// followed by a retry does not double-count. Non-terminal phases (Running) are
+// ignored.
+func recordTerminalBuild(newPhase, targetImage string, job *batchv1.Job) {
+	var result string
+	switch newPhase {
+	case "Succeeded":
+		result = metrics.ResultSucceeded
+	case "Failed":
+		result = metrics.ResultFailed
+	default:
+		return
+	}
+
+	var start, end time.Time
+	if job.Status.StartTime != nil {
+		start = job.Status.StartTime.Time
+	}
+	if job.Status.CompletionTime != nil {
+		end = job.Status.CompletionTime.Time
+	}
+	metrics.RecordBuildResult(result, targetImage, start, end)
+}
+
+// buildNamespaceFor returns the namespace in which build resources (Job +
+// ConfigMap) should be created for a given ImagePatch. When r.BuildNamespace
+// is empty the controller preserves legacy behavior and uses the CR's own
+// namespace.
+func (r *ImagePatchReconciler) buildNamespaceFor(cr *omsv1alpha1.ImagePatch) string {
+	if r.BuildNamespace != "" {
+		return r.BuildNamespace
+	}
+	return cr.Namespace
+}
+
+// sourceLabels marks build resources with the originating ImagePatch CR's
+// name and namespace. Required when build resources live in a different
+// namespace than the CR (no cross-namespace OwnerReference) and useful as
+// traceability metadata even when they don't.
+func sourceLabels(cr *omsv1alpha1.ImagePatch) map[string]string {
+	return map[string]string{
+		"app":                          "imagepatch",
+		"imagepatch":                   cr.Name,
+		"imagepatch.source.name":       cr.Name,
+		"imagepatch.source.namespace":  cr.Namespace,
+	}
+}
+
 // createOrUpdateConfigMap creates the ConfigMap if it doesn't exist, or updates it if it does
-func (r *ImagePatchReconciler) createOrUpdateConfigMap(ctx context.Context, imagePatch *omsv1alpha1.ImagePatch, cmName, dockerfileContent string) error {
+func (r *ImagePatchReconciler) createOrUpdateConfigMap(ctx context.Context, imagePatch *omsv1alpha1.ImagePatch, cmName, namespace, dockerfileContent string) error {
 	l := log.FromContext(ctx)
 
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      cmName,
-			Namespace: imagePatch.Namespace,
+			Namespace: namespace,
+			Labels:    sourceLabels(imagePatch),
 		},
 		Data: map[string]string{
 			"Dockerfile": dockerfileContent,
 		},
 	}
 
-	// set OwnerReference
-	if err := controllerutil.SetControllerReference(imagePatch, cm, r.Scheme); err != nil {
-		return err
+	// Owner refs only work within a single namespace; skip when the
+	// ConfigMap lives elsewhere than the CR.
+	if namespace == imagePatch.Namespace {
+		if err := controllerutil.SetControllerReference(imagePatch, cm, r.Scheme); err != nil {
+			return err
+		}
 	}
 
 	if err := r.Create(ctx, cm); err != nil {
 		if errors.IsAlreadyExists(err) {
 			// update ConfigMap
 			existingCM := &corev1.ConfigMap{}
-			if getErr := r.Get(ctx, types.NamespacedName{Name: cmName, Namespace: imagePatch.Namespace}, existingCM); getErr != nil {
+			if getErr := r.Get(ctx, types.NamespacedName{Name: cmName, Namespace: namespace}, existingCM); getErr != nil {
 				return getErr
 			}
 			existingCM.Data = cm.Data
@@ -179,77 +276,91 @@ func (r *ImagePatchReconciler) createOrUpdateConfigMap(ctx context.Context, imag
 	return nil
 }
 
-func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, destination, kanikoImage string) *batchv1.Job {
+func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destination, kanikoImage, pullCachePVC, pullCacheMountPath, buildCacheRepo string) *batchv1.Job {
 
 	backoffLimit := int32(0)
 	secretDefaultMode := int32(0664)
 
+	args := []string{
+		"--dockerfile=/workspace/Dockerfile",
+		"--context=/workspace/context",
+		"--destination=" + destination,
+	}
+	if pullCachePVC != "" {
+		args = append(args, "--cache-dir="+pullCacheMountPath)
+	}
+	if buildCacheRepo != "" {
+		args = append(args, "--cache=true", "--cache-repo="+buildCacheRepo)
+	}
+
+	volumeMounts := []corev1.VolumeMount{
+		{Name: "dockerfile", MountPath: "/workspace/Dockerfile", SubPath: "Dockerfile"},
+		{Name: "context", MountPath: "/workspace/context"},
+		{Name: "docker-auth", MountPath: "/kaniko/.docker/config.json", SubPath: "config.json"},
+	}
+	volumes := []corev1.Volume{
+		{
+			Name: "dockerfile",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: cmName},
+				},
+			},
+		},
+		{
+			Name: "context",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		},
+		{
+			Name: "docker-auth",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName:  "image-registry-secret",
+					DefaultMode: &secretDefaultMode,
+				},
+			},
+		},
+	}
+	if pullCachePVC != "" {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "kaniko-pull-cache",
+			MountPath: pullCacheMountPath,
+		})
+		volumes = append(volumes, corev1.Volume{
+			Name: "kaniko-pull-cache",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: pullCachePVC,
+				},
+			},
+		})
+	}
+
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      jobName,
-			Namespace: cr.Namespace,
-			Labels:    map[string]string{"app": "imagepatch", "imagepatch": cr.Name},
+			Namespace: namespace,
+			Labels:    sourceLabels(cr),
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit: &backoffLimit,
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{"app": "imagepatch", "imagepatch": cr.Name},
+					Labels: sourceLabels(cr),
 				},
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyNever,
 					Containers: []corev1.Container{
 						{
-							Name:  "kaniko",
-							Image: kanikoImage,
-							Args: []string{
-								"--dockerfile=/workspace/Dockerfile",
-								"--context=/workspace/context",
-								"--destination=" + destination,
-							},
-							VolumeMounts: []corev1.VolumeMount{
-								{
-									Name:      "dockerfile",
-									MountPath: "/workspace/Dockerfile",
-									SubPath:   "Dockerfile",
-								},
-								{
-									Name:      "context",
-									MountPath: "/workspace/context",
-								},
-								{
-									Name:      "docker-auth",
-									MountPath: "/kaniko/.docker/config.json",
-									SubPath:   "config.json",
-								},
-							},
+							Name:         "kaniko",
+							Image:        kanikoImage,
+							Args:         args,
+							VolumeMounts: volumeMounts,
 						},
 					},
-					Volumes: []corev1.Volume{
-						{
-							Name: "dockerfile",
-							VolumeSource: corev1.VolumeSource{
-								ConfigMap: &corev1.ConfigMapVolumeSource{
-									LocalObjectReference: corev1.LocalObjectReference{Name: cmName},
-								},
-							},
-						},
-						{
-							Name: "context",
-							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{},
-							},
-						},
-						{
-							Name: "docker-auth",
-							VolumeSource: corev1.VolumeSource{
-								Secret: &corev1.SecretVolumeSource{
-									SecretName:  "image-registry-secret",
-									DefaultMode: &secretDefaultMode,
-								},
-							},
-						},
-					},
+					Volumes: volumes,
 				},
 			},
 		},

@@ -19,5 +19,34 @@ kaniko:
     repository: image-patch-system/kaniko-executor
     # tag defaults to v1.23.2
 
+  # Pull cache: PVC mounted as Kaniko's --cache-dir so pulled base-image
+  # layers persist across builds. Chart creates a 100Gi RWO PVC on the
+  # cluster default storage class, in the same namespace as the build
+  # Jobs (controlled by config.buildNamespace below).
+  pullCache:
+    enabled: true
+
 config:
   defaultImageRegistry: registry.luna.ogpu.cloud/patched-images
+  # All Kaniko build Jobs (and the chart-managed pull-cache PVC) land in
+  # `oms`, regardless of which namespace the ImagePatch CR itself lives in.
+  # See values.yaml for the cross-namespace owner-reference caveats.
+  buildNamespace: oms
+
+# This cluster runs kube-prometheus-stack in the `monitoring` namespace
+# under the SA `k8s-prometheus` (not the upstream default
+# `prometheus-kube-prometheus-prometheus`). Enable the chart's
+# ServiceMonitor and point the ClusterRoleBinding at the real SA so
+# Prometheus's bearer token is authorized for the metrics endpoint.
+metrics:
+  serviceMonitor:
+    enabled: true
+    # Prometheus CR k8s-prometheus has serviceMonitorSelector
+    # matchLabels: {release: kube-prometheus-stack}, so the ServiceMonitor
+    # must carry that label to be discovered.
+    labels:
+      release: kube-prometheus-stack
+    prometheus:
+      serviceAccount:
+        name: k8s-prometheus
+        namespace: monitoring

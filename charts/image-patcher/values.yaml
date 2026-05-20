@@ -23,6 +23,18 @@ imagePullSecrets: []
 config:
   # DEFAULT_IMAGE_REGISTRY: registry used when an ImagePatch does not set spec.targetImage.
   defaultImageRegistry: ""
+  # buildNamespace: when set, the controller creates the Kaniko build Job and
+  # its supporting ConfigMap in this namespace instead of the ImagePatch CR's
+  # own namespace. The chart-managed pull-cache PVC is also placed here so
+  # build pods can mount it. Cross-namespace owner references are not allowed
+  # by Kubernetes, so when buildNamespace differs from the CR's namespace the
+  # controller omits the OwnerReference and labels the Job / ConfigMap with
+  # imagepatch.source.name / imagepatch.source.namespace for traceability —
+  # cleanup on CR deletion becomes the user's responsibility.
+  #
+  # Empty (default) preserves the legacy behavior: Job + ConfigMap created in
+  # the same namespace as the ImagePatch CR, owner-referenced for automatic GC.
+  buildNamespace: ""
 
 # Kaniko executor image, injected as KANIKO_IMAGE_NAME env var.
 # Override registry for air-gapped or mirrored environments.
@@ -31,6 +43,31 @@ kaniko:
     registry: gcr.io
     repository: kaniko-project/executor
     tag: v1.23.2
+
+  # Pull cache: PVC mounted into every Kaniko build Job at pullCache.mountPath.
+  # The controller passes --cache-dir=<mountPath> so pulled *base-image*
+  # layers persist across builds. PVC lifecycle is tied to the chart release,
+  # not any individual ImagePatch CR.
+  #
+  # The PVC is ReadWriteOnce, so concurrent ImagePatch builds serialize on
+  # the volume. For clusters with frequent parallel patches, point
+  # existingClaim at a ReadWriteMany PVC backed by NFS / CephFS.
+  pullCache:
+    enabled: false
+    # If set, the controller mounts this existing PVC (chart skips creating one).
+    existingClaim: ""
+    size: 100Gi
+    storageClassName: ""
+    mountPath: /cache
+
+  # Build cache: container registry where Kaniko caches the result of each
+  # intermediate RUN layer. Independent from pullCache above; both can be
+  # enabled simultaneously. When enabled, the controller passes
+  # --cache=true --cache-repo=<repo> to Kaniko. Multi-node safe.
+  buildCache:
+    enabled: false
+    repo: ""
+    # Example: registry.luna.ogpu.cloud/image-patch-system/kaniko-build-cache
 
 replicaCount: 1
 
@@ -81,6 +118,35 @@ metrics:
   port: 8443
   service:
     type: ClusterIP
+  # ServiceMonitor lets Prometheus Operator auto-discover and scrape the
+  # controller's :8443/metrics endpoint. Requires monitoring.coreos.com CRDs
+  # (kube-prometheus-stack or prometheus-operator) installed in the cluster.
+  serviceMonitor:
+    enabled: false
+    # Render the ServiceMonitor in a different namespace than the chart
+    # release. Default (empty) uses .Release.Namespace.
+    namespace: ""
+    # Extra labels to add to the ServiceMonitor metadata. kube-prometheus-stack
+    # configures Prometheus with a serviceMonitorSelector like
+    # `release: kube-prometheus-stack`, so the ServiceMonitor needs that label
+    # to be discovered. Check your Prometheus CR's spec.serviceMonitorSelector
+    # and set this accordingly. Empty by default to avoid making assumptions.
+    labels: {}
+    interval: 30s
+    scrapeTimeout: 10s
+    # Bind the controller's metrics-reader ClusterRole to the Prometheus
+    # server's ServiceAccount so its bearer token is authorized to GET
+    # /metrics. Defaults match kube-prometheus-stack conventional names.
+    prometheus:
+      serviceAccount:
+        name: prometheus-kube-prometheus-prometheus
+        namespace: monitoring
+    # The metrics endpoint serves a controller-runtime self-signed cert by
+    # default; insecureSkipVerify is the working default. Switch to a CA
+    # bundle once cert-manager-issued certs are wired up (see the
+    # [METRICS-WITH-CERTS] TODO in cmd/main.go).
+    tlsConfig:
+      insecureSkipVerify: true
 
 # Extra args appended to the controller command line.
 extraArgs: []
