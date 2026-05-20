@@ -4,11 +4,6 @@ on:
   push:
     branches:
       - main
-      # TODO(MSP-46): remove this entry before merging. Temporarily included
-      # so we can validate the CD pipeline end-to-end (self-hosted runner,
-      # docker push, ChartMuseum upload) without first merging to main.
-      - dev/robert/msp-46-metrics-spec
-      - dev/xy/MSP-51-reset-shell-with-bin-sh-in-image-patch-stage
   workflow_dispatch:
 
 # Only one release at a time per ref; cancel any in-flight run so the latest commit wins.
