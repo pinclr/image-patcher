@@ -28,6 +28,10 @@ kaniko:
     storageClassName: ceph-filesystem
     size: 100Gi
     mountPath: /cache
+    # Nightly CronJob prunes cache files older than 30 days so the RWX PVC
+    # doesn't fill up (Kaniko itself never evicts).
+    cleanup:
+      enabled: true
 
   # Build cache (intermediate RUN layers): pushed/pulled from a container
   # registry via --cache=true --cache-repo=<repo>. Multi-node safe by
