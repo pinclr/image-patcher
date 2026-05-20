@@ -49,9 +49,12 @@ kaniko:
   # layers persist across builds. PVC lifecycle is tied to the chart release,
   # not any individual ImagePatch CR.
   #
-  # The PVC is ReadWriteOnce, so concurrent ImagePatch builds serialize on
-  # the volume. For clusters with frequent parallel patches, point
-  # existingClaim at a ReadWriteMany PVC backed by NFS / CephFS.
+  # The chart-managed PVC is created as ReadWriteMany so multiple build Jobs
+  # (one per concurrently reconciled ImagePatch CR) can share it across
+  # nodes. storageClassName must therefore reference a class that supports
+  # RWX -- CephFS, NFS, Azure Files, EFS, etc. To bring your own PVC (any
+  # access mode you want), set existingClaim and the chart will skip
+  # creating one.
   pullCache:
     enabled: false
     # If set, the controller mounts this existing PVC (chart skips creating one).
