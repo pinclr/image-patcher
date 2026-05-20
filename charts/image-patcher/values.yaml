@@ -42,6 +42,11 @@ kaniko:
   # existingClaim at a ReadWriteMany PVC backed by NFS / CephFS.
   pullCache:
     enabled: false
+    # Namespace the PVC is created in. Must match the namespace where
+    # ImagePatch CRs (and therefore Kaniko build Jobs) live — PVCs are
+    # namespace-scoped, so a Job in another namespace cannot mount it. Empty
+    # means the chart release namespace.
+    namespace: ""
     # If set, the controller mounts this existing PVC (chart skips creating one).
     existingClaim: ""
     size: 100Gi
