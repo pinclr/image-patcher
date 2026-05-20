@@ -64,6 +64,10 @@ spec:
           env:
             - name: DEFAULT_IMAGE_REGISTRY
               value: {{ .Values.config.defaultImageRegistry | quote }}
+            {{- with .Values.config.buildNamespace }}
+            - name: BUILD_NAMESPACE
+              value: {{ . | quote }}
+            {{- end }}
             - name: KANIKO_IMAGE_NAME
               value: {{ include "image-patcher.kanikoImage" . | quote }}
             {{- if .Values.kaniko.pullCache.enabled }}

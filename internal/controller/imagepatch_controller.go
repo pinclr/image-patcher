@@ -43,6 +43,18 @@ type ImagePatchReconciler struct {
 	Scheme          *runtime.Scheme
 	DefaultRegistry string
 	KanikoImage     string
+	// BuildNamespace, when set, is where Kaniko build Jobs and their
+	// supporting ConfigMaps are created — regardless of which namespace the
+	// ImagePatch CR itself lives in. Empty preserves the legacy
+	// same-namespace behavior. Cross-namespace OwnerReferences are not
+	// allowed by Kubernetes, so when BuildNamespace differs from the CR's
+	// namespace the controller skips SetControllerReference and instead
+	// stamps the Job / ConfigMap with labels:
+	//   imagepatch.source.name
+	//   imagepatch.source.namespace
+	// for traceability. Cleanup on CR deletion becomes the user's
+	// responsibility in that mode.
+	BuildNamespace string
 	// KanikoPullCachePVC, when set, is the name of a PVC (in the same
 	// namespace as the ImagePatch) the controller mounts into every Kaniko
 	// build Job at KanikoPullCacheMountPath. Kaniko is then invoked with
@@ -79,30 +91,39 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	jobName := imagePatch.Name + "-build-job"
 	cmName := imagePatch.Name + "-dockerfile"
+	buildNs := r.buildNamespaceFor(&imagePatch)
+	crossNamespace := buildNs != imagePatch.Namespace
 
 	var job batchv1.Job
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: imagePatch.Namespace}, &job)
+	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: buildNs}, &job)
 	if err == nil {
 		return r.handleExistingJob(ctx, &imagePatch, &job)
 	}
 
 	if errors.IsNotFound(err) {
-		l.Info("Creating new build resources", "ImagePatch", imagePatch.Name)
+		l.Info("Creating new build resources", "ImagePatch", imagePatch.Name, "buildNamespace", buildNs)
 
 		dockerfileContent := GenerateDockerfile(&imagePatch)
 		l.V(1).Info("Generated Dockerfile", "content", dockerfileContent)
 
-		if err := r.createOrUpdateConfigMap(ctx, &imagePatch, cmName, dockerfileContent); err != nil {
+		if err := r.createOrUpdateConfigMap(ctx, &imagePatch, cmName, buildNs, dockerfileContent); err != nil {
 			metrics.RecordReconcileFailure(metrics.ReasonConfigMapApply)
 			return ctrl.Result{}, err
 		}
 
 		destination := r.resolveDestination(&imagePatch)
-		j := constructJob(&imagePatch, jobName, cmName, destination, r.KanikoImage,
+		j := constructJob(&imagePatch, jobName, cmName, buildNs, destination, r.KanikoImage,
 			r.KanikoPullCachePVC, r.KanikoPullCacheMountPath, r.KanikoBuildCacheRepo)
-		if err := controllerutil.SetControllerReference(&imagePatch, j, r.Scheme); err != nil {
-			metrics.RecordReconcileFailure(metrics.ReasonOwnerRef)
-			return ctrl.Result{}, err
+		// Owner references must live in the same namespace as the dependent
+		// (Kubernetes GC rejects cross-namespace ownership). When the build
+		// namespace matches the CR's namespace, set the controller reference
+		// for automatic cleanup; otherwise rely on the source labels for
+		// traceability and leave cleanup to the user.
+		if !crossNamespace {
+			if err := controllerutil.SetControllerReference(&imagePatch, j, r.Scheme); err != nil {
+				metrics.RecordReconcileFailure(metrics.ReasonOwnerRef)
+				return ctrl.Result{}, err
+			}
 		}
 		if err := r.Create(ctx, j); err != nil {
 			metrics.RecordReconcileFailure(metrics.ReasonJobCreate)
@@ -187,30 +208,58 @@ func recordTerminalBuild(newPhase, targetImage string, job *batchv1.Job) {
 	metrics.RecordBuildResult(result, targetImage, start, end)
 }
 
+// buildNamespaceFor returns the namespace in which build resources (Job +
+// ConfigMap) should be created for a given ImagePatch. When r.BuildNamespace
+// is empty the controller preserves legacy behavior and uses the CR's own
+// namespace.
+func (r *ImagePatchReconciler) buildNamespaceFor(cr *omsv1alpha1.ImagePatch) string {
+	if r.BuildNamespace != "" {
+		return r.BuildNamespace
+	}
+	return cr.Namespace
+}
+
+// sourceLabels marks build resources with the originating ImagePatch CR's
+// name and namespace. Required when build resources live in a different
+// namespace than the CR (no cross-namespace OwnerReference) and useful as
+// traceability metadata even when they don't.
+func sourceLabels(cr *omsv1alpha1.ImagePatch) map[string]string {
+	return map[string]string{
+		"app":                          "imagepatch",
+		"imagepatch":                   cr.Name,
+		"imagepatch.source.name":       cr.Name,
+		"imagepatch.source.namespace":  cr.Namespace,
+	}
+}
+
 // createOrUpdateConfigMap creates the ConfigMap if it doesn't exist, or updates it if it does
-func (r *ImagePatchReconciler) createOrUpdateConfigMap(ctx context.Context, imagePatch *omsv1alpha1.ImagePatch, cmName, dockerfileContent string) error {
+func (r *ImagePatchReconciler) createOrUpdateConfigMap(ctx context.Context, imagePatch *omsv1alpha1.ImagePatch, cmName, namespace, dockerfileContent string) error {
 	l := log.FromContext(ctx)
 
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      cmName,
-			Namespace: imagePatch.Namespace,
+			Namespace: namespace,
+			Labels:    sourceLabels(imagePatch),
 		},
 		Data: map[string]string{
 			"Dockerfile": dockerfileContent,
 		},
 	}
 
-	// set OwnerReference
-	if err := controllerutil.SetControllerReference(imagePatch, cm, r.Scheme); err != nil {
-		return err
+	// Owner refs only work within a single namespace; skip when the
+	// ConfigMap lives elsewhere than the CR.
+	if namespace == imagePatch.Namespace {
+		if err := controllerutil.SetControllerReference(imagePatch, cm, r.Scheme); err != nil {
+			return err
+		}
 	}
 
 	if err := r.Create(ctx, cm); err != nil {
 		if errors.IsAlreadyExists(err) {
 			// update ConfigMap
 			existingCM := &corev1.ConfigMap{}
-			if getErr := r.Get(ctx, types.NamespacedName{Name: cmName, Namespace: imagePatch.Namespace}, existingCM); getErr != nil {
+			if getErr := r.Get(ctx, types.NamespacedName{Name: cmName, Namespace: namespace}, existingCM); getErr != nil {
 				return getErr
 			}
 			existingCM.Data = cm.Data
@@ -227,7 +276,7 @@ func (r *ImagePatchReconciler) createOrUpdateConfigMap(ctx context.Context, imag
 	return nil
 }
 
-func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, destination, kanikoImage, pullCachePVC, pullCacheMountPath, buildCacheRepo string) *batchv1.Job {
+func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destination, kanikoImage, pullCachePVC, pullCacheMountPath, buildCacheRepo string) *batchv1.Job {
 
 	backoffLimit := int32(0)
 	secretDefaultMode := int32(0664)
@@ -292,14 +341,14 @@ func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, destination, kani
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      jobName,
-			Namespace: cr.Namespace,
-			Labels:    map[string]string{"app": "imagepatch", "imagepatch": cr.Name},
+			Namespace: namespace,
+			Labels:    sourceLabels(cr),
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit: &backoffLimit,
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{"app": "imagepatch", "imagepatch": cr.Name},
+					Labels: sourceLabels(cr),
 				},
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyNever,

@@ -8,7 +8,9 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: {{ include "image-patcher.fullname" . }}-kaniko-pull-cache
-  namespace: {{ .Release.Namespace }}
+  # Lives in config.buildNamespace if set (where Kaniko Jobs are placed by the
+  # controller), otherwise falls back to the chart release namespace.
+  namespace: {{ default .Release.Namespace .Values.config.buildNamespace }}
   labels:
     {{- include "image-patcher.labels" . | nindent 4 }}
   # Helm preserves PVCs on uninstall by convention; the annotation makes that
