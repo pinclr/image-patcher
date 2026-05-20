@@ -372,6 +372,12 @@ func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destin
 func GenerateDockerfile(cr *omsv1alpha1.ImagePatch) string {
 	var sb strings.Builder
 
+	// FROM (extra stages) - emitted before the base image so kaniko parses
+	// them as named stages that the final stage's COPY --from can resolve.
+	for _, src := range cr.Spec.FromImages {
+		sb.WriteString(fmt.Sprintf("FROM %s AS %s\n\n", src.Image, src.Name))
+	}
+
 	// FROM - base image
 	sb.WriteString(fmt.Sprintf("FROM %s\n\n", cr.Spec.BaseImage))
 
@@ -467,6 +473,23 @@ func GenerateDockerfile(cr *omsv1alpha1.ImagePatch) string {
 		sb.WriteString(fmt.Sprintf("RUN %s\n\n", run))
 	}
 
+	// COPY --from - pull files from the multi-stage sources declared above.
+	// Emitted after RUN steps so the user can layer them on top of an
+	// otherwise patched filesystem (e.g. a base image + apt installs + a
+	// rootfs overlay from a separate image).
+	for _, src := range cr.Spec.FromImages {
+		for _, c := range src.Copy {
+			dst := c.Dst
+			if dst == "" {
+				dst = c.Src
+			}
+			sb.WriteString(fmt.Sprintf("COPY --from=%s %s %s\n", src.Name, c.Src, dst))
+		}
+	}
+	if hasAnyCopy(cr.Spec.FromImages) {
+		sb.WriteString("\n")
+	}
+
 	// ENTRYPOINT
 	if len(cr.Spec.Entrypoint) > 0 {
 		sb.WriteString(fmt.Sprintf("ENTRYPOINT %s\n", formatCmdArray(cr.Spec.Entrypoint)))
@@ -504,6 +527,18 @@ func (r *ImagePatchReconciler) resolveDestination(cr *omsv1alpha1.ImagePatch) st
 		return fmt.Sprintf("%s/%s-patch:%s", strings.TrimRight(r.DefaultRegistry, "/"), name, tag)
 	}
 	return fmt.Sprintf("%s-patch:%s", name, tag)
+}
+
+// hasAnyCopy reports whether any FromImage entry has at least one Copy
+// directive, so the generator can decide whether to emit the trailing
+// blank line after the COPY --from block.
+func hasAnyCopy(srcs []omsv1alpha1.FromImage) bool {
+	for _, s := range srcs {
+		if len(s.Copy) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // formatCmdArray formats a command array for Dockerfile ENTRYPOINT/CMD
