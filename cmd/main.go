@@ -196,6 +196,7 @@ func main() {
 		KanikoPullCachePVC:       os.Getenv("KANIKO_PULL_CACHE_PVC"),
 		KanikoPullCacheMountPath: pullCacheMountPath,
 		KanikoBuildCacheRepo:     os.Getenv("KANIKO_BUILD_CACHE_REPO"),
+		BuildNamespace:           os.Getenv("BUILD_NAMESPACE"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ImagePatch")
 		os.Exit(1)

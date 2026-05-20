@@ -21,16 +21,17 @@ kaniko:
 
   # Pull cache: PVC mounted as Kaniko's --cache-dir so pulled base-image
   # layers persist across builds. Chart creates a 100Gi RWO PVC on the
-  # cluster default storage class. The PVC lives in the `oms` namespace
-  # because that is where ImagePatch CRs are created on this cluster —
-  # PVCs are namespace-scoped, so the build Job must be in the same
-  # namespace as the PVC.
+  # cluster default storage class, in the same namespace as the build
+  # Jobs (controlled by config.buildNamespace below).
   pullCache:
     enabled: true
-    namespace: oms
 
 config:
   defaultImageRegistry: registry.luna.ogpu.cloud/patched-images
+  # All Kaniko build Jobs (and the chart-managed pull-cache PVC) land in
+  # `oms`, regardless of which namespace the ImagePatch CR itself lives in.
+  # See values.yaml for the cross-namespace owner-reference caveats.
+  buildNamespace: oms
 
 # This cluster runs kube-prometheus-stack in the `monitoring` namespace
 # under the SA `k8s-prometheus` (not the upstream default
