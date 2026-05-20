@@ -1,0 +1,155 @@
+{{- if .Values.healthcheck.enabled -}}
+# Healthcheck (canary) CronJob: on schedule, submits a single noop
+# ImagePatch CR and polls its phase until terminal. Verifies the full
+# pipeline -- base image pull, Dockerfile generation, Kaniko build,
+# registry push, RWX pull-cache mount -- without depending on external
+# apt/pypi mirrors. Outcome is visible through the existing controller
+# metrics (image_patcher_builds_total{image=~".*image-patch-healthcheck.*"}).
+#
+# Successes are deleted immediately; failures are retained for
+# .Values.healthcheck.failureRetention so engineers can inspect the
+# build Job / Pod logs before the next run garbage-collects them.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "image-patcher.fullname" . }}-healthcheck
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "image-patcher.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.healthcheck.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # Each tick is bounded; if anything wedges the script, the Job's
+      # activeDeadline cuts it off and the next tick still gets to run.
+      activeDeadlineSeconds: {{ .Values.healthcheck.activeDeadlineSeconds }}
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            {{- include "image-patcher.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: healthcheck
+        spec:
+          serviceAccountName: {{ include "image-patcher.fullname" . }}-healthcheck
+          restartPolicy: Never
+          containers:
+            - name: probe
+              image: {{ .Values.healthcheck.image | quote }}
+              # Always: canary images are typically mutable tags (e.g.
+              # mirrored "kubectl:1.31" that gets re-pushed for kubectl
+              # updates). Without Always, kubelet keeps the cached old
+              # digest forever and silently runs against a stale binary.
+              imagePullPolicy: Always
+              env:
+                - name: NAMESPACE
+                  value: {{ .Release.Namespace }}
+                - name: BASE_IMAGE
+                  value: {{ .Values.healthcheck.baseImage | quote }}
+                - name: TARGET_IMAGE
+                  value: {{ .Values.healthcheck.targetImage | quote }}
+                - name: TIMEOUT_SECONDS
+                  value: {{ .Values.healthcheck.timeoutSeconds | quote }}
+                - name: FAILURE_RETENTION_SECONDS
+                  value: {{ .Values.healthcheck.failureRetentionSeconds | quote }}
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+
+                  CANARY_LABEL="image-patcher.healthcheck/canary=true"
+                  TS=$(date +%s)
+                  NAME="healthcheck-noop-${TS}"
+
+                  # GC older canary CRs whose age has exceeded the retention
+                  # window. Successful runs already self-delete; this only
+                  # catches failed leftovers and anything we lost track of.
+                  NOW=$(date +%s)
+                  CUTOFF=$((NOW - FAILURE_RETENTION_SECONDS))
+                  echo "[gc] cutoff=$(date -u -d @${CUTOFF} 2>/dev/null || echo ${CUTOFF})"
+                  kubectl get imagepatch -n "${NAMESPACE}" \
+                      -l "${CANARY_LABEL}" \
+                      -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.creationTimestamp}{"\n"}{end}' \
+                    | while IFS=$(printf '\t') read -r ip_name ip_ts; do
+                        [ -z "${ip_name}" ] && continue
+                        # Portable epoch conversion: try GNU date first, fall back
+                        # to busybox date.
+                        ip_epoch=$(date -u -d "${ip_ts}" +%s 2>/dev/null || date -u -D "%Y-%m-%dT%H:%M:%SZ" -d "${ip_ts}" +%s 2>/dev/null || echo 0)
+                        if [ "${ip_epoch}" -lt "${CUTOFF}" ] && [ "${ip_epoch}" -gt 0 ]; then
+                          echo "[gc] deleting stale ${ip_name} (created ${ip_ts})"
+                          kubectl delete imagepatch -n "${NAMESPACE}" "${ip_name}" --ignore-not-found
+                        fi
+                      done
+
+                  # Submit the probe CR. Stable target tag (overwritten each
+                  # run) keeps the registry from accumulating canary artifacts.
+                  echo "[submit] ${NAME} -> ${TARGET_IMAGE}"
+                  cat <<EOF | kubectl apply -f -
+                  apiVersion: oms.ogpu.cloud/v1alpha1
+                  kind: ImagePatch
+                  metadata:
+                    name: ${NAME}
+                    namespace: ${NAMESPACE}
+                    labels:
+                      image-patcher.healthcheck/canary: "true"
+                      image-patcher.healthcheck/case: noop
+                  spec:
+                    baseImage: ${BASE_IMAGE}
+                    targetImage: ${TARGET_IMAGE}
+                    shell:
+                      - name: noop
+                        run: "true"
+                  EOF
+
+                  # Poll until terminal phase or timeout.
+                  #
+                  # Cross-namespace caveat: when config.buildNamespace differs
+                  # from the CR's namespace, the controller's Owns(&Job{}) watch
+                  # cannot reach the Job, so it won't observe terminal Job
+                  # transitions on its own. As a workaround, annotate the CR
+                  # each tick to force a fresh reconcile. Track a follow-up to
+                  # fix this controller-side (RequeueAfter on Running phase).
+                  DEADLINE=$((NOW + TIMEOUT_SECONDS))
+                  PHASE=""
+                  while [ "$(date +%s)" -lt "${DEADLINE}" ]; do
+                    PHASE=$(kubectl get imagepatch -n "${NAMESPACE}" "${NAME}" \
+                              -o jsonpath='{.status.phase}' 2>/dev/null || true)
+                    case "${PHASE}" in
+                      Succeeded)
+                        echo "[ok] ${NAME} succeeded"
+                        kubectl delete imagepatch -n "${NAMESPACE}" "${NAME}" --ignore-not-found
+                        exit 0
+                        ;;
+                      Failed)
+                        echo "[fail] ${NAME} failed -- retaining for ${FAILURE_RETENTION_SECONDS}s for debug"
+                        kubectl get imagepatch -n "${NAMESPACE}" "${NAME}" -o yaml | sed 's/^/  /'
+                        exit 1
+                        ;;
+                    esac
+                    kubectl annotate imagepatch -n "${NAMESPACE}" "${NAME}" \
+                      image-patcher.healthcheck/probe-poll="$(date +%s)" \
+                      --overwrite >/dev/null 2>&1 || true
+                    sleep 10
+                  done
+
+                  echo "[timeout] ${NAME} did not reach a terminal phase within ${TIMEOUT_SECONDS}s (last seen: ${PHASE:-<unset>})"
+                  exit 2
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 1001
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  cpu: 200m
+                  memory: 128Mi
+{{- end }}
