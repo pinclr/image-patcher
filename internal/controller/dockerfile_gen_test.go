@@ -69,11 +69,11 @@ FROM ubuntu:24.04
 
 SHELL ["/bin/sh", "-c"]
 
-# noop
-RUN true
-
 COPY --from=rootfs /rootfs /
 COPY --from=rootfs /etc/pip.conf /etc/pip.conf
+
+# noop
+RUN true
 
 `
 
