@@ -433,6 +433,25 @@ func GenerateDockerfile(cr *omsv1alpha1.ImagePatch) string {
 	// ["sh", "-lc"] on a minimal image without /bin in PATH).
 	sb.WriteString("SHELL [\"/bin/sh\", \"-c\"]\n\n")
 
+	// COPY --from - pull files from the multi-stage sources declared at
+	// the top of the file. Emitted immediately after the base FROM so the
+	// copied tree behaves like an extension of the base image: every
+	// subsequent RUN (apt install, chmod, etc.) sees the files in place.
+	// Order within the COPY block follows the user-supplied order of
+	// FromImages and their Copy entries.
+	for _, src := range cr.Spec.FromImages {
+		for _, c := range src.Copy {
+			dst := c.Dst
+			if dst == "" {
+				dst = c.Src
+			}
+			sb.WriteString(fmt.Sprintf("COPY --from=%s %s %s\n", src.Name, c.Src, dst))
+		}
+	}
+	if hasAnyCopy(cr.Spec.FromImages) {
+		sb.WriteString("\n")
+	}
+
 	// ENV - environment variables
 	if len(cr.Spec.ENV) > 0 {
 		for k, v := range cr.Spec.ENV {
@@ -531,23 +550,6 @@ func GenerateDockerfile(cr *omsv1alpha1.ImagePatch) string {
 		run := strings.TrimSpace(step.Run)
 		run = strings.ReplaceAll(run, "\n", " && \\\n    ")
 		sb.WriteString(fmt.Sprintf("RUN %s\n\n", run))
-	}
-
-	// COPY --from - pull files from the multi-stage sources declared above.
-	// Emitted after RUN steps so the user can layer them on top of an
-	// otherwise patched filesystem (e.g. a base image + apt installs + a
-	// rootfs overlay from a separate image).
-	for _, src := range cr.Spec.FromImages {
-		for _, c := range src.Copy {
-			dst := c.Dst
-			if dst == "" {
-				dst = c.Src
-			}
-			sb.WriteString(fmt.Sprintf("COPY --from=%s %s %s\n", src.Name, c.Src, dst))
-		}
-	}
-	if hasAnyCopy(cr.Spec.FromImages) {
-		sb.WriteString("\n")
 	}
 
 	// ENTRYPOINT
