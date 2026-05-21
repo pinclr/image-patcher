@@ -337,7 +337,11 @@ func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destin
 		args = append(args, "--cache-dir="+pullCacheMountPath)
 	}
 	if buildCacheRepo != "" {
-		args = append(args, "--cache=true", "--cache-repo="+buildCacheRepo)
+		// --cache-copy-layers ensures cached layer blobs are pushed to the
+		// destination registry, not just referenced by digest from the cache
+		// repo. Without it the final manifest push fails with
+		// MANIFEST_BLOB_UNKNOWN when the destination doesn't have the blobs.
+		args = append(args, "--cache=true", "--cache-repo="+buildCacheRepo, "--cache-copy-layers=true")
 	}
 
 	volumeMounts := []corev1.VolumeMount{
