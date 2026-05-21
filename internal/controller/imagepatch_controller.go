@@ -452,9 +452,22 @@ func GenerateDockerfile(cr *omsv1alpha1.ImagePatch) string {
 		sb.WriteString("\" > /etc/apt/sources.list\n\n")
 	}
 
-	// APT - install packages
+	// APT - install packages.
+	//
+	// The two Dpkg::Options pin conffile-conflict resolution to a
+	// non-interactive default: when a package ships a config file that
+	// already exists on disk (e.g. /etc/containers/registries.conf
+	// provided by a fromImages overlay), dpkg keeps the on-disk version
+	// (--force-confold) for files the user touched and accepts the
+	// package's default (--force-confdef) for ones they didn't. Without
+	// these, dpkg prompts on stdin, fails with "end of file on stdin
+	// at conffile prompt" under kaniko (no TTY), and the install — plus
+	// every dependent package — aborts. DEBIAN_FRONTEND=noninteractive
+	// alone does not cover conffile conflicts.
 	if cr.Spec.APT != nil && len(cr.Spec.APT.Install) > 0 {
 		sb.WriteString("RUN apt-get update && apt-get install -y \\\n")
+		sb.WriteString("    -o Dpkg::Options::=\"--force-confdef\" \\\n")
+		sb.WriteString("    -o Dpkg::Options::=\"--force-confold\" \\\n")
 		for _, pkg := range cr.Spec.APT.Install {
 			sb.WriteString(fmt.Sprintf("    %s \\\n", pkg))
 		}

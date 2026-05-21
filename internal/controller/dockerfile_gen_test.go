@@ -30,6 +30,8 @@ deb http://10.11.32.173/ubuntu $VERSION_CODENAME-backports main restricted unive
 " > /etc/apt/sources.list
 
 RUN apt-get update && apt-get install -y \
+    -o Dpkg::Options::="--force-confdef" \
+    -o Dpkg::Options::="--force-confold" \
     tini \
     podman \
     && rm -rf /var/lib/apt/lists/*
