@@ -43,7 +43,7 @@ kaniko:
   # both are enabled together here.
   buildCache:
     enabled: true
-    repo: registry.luna.ogpu.cloud/patched-images/kaniko-build-cache
+    repo: registry.luna.ogpu.cloud/image-patch-system/kaniko-build-cache
 
 config:
   defaultImageRegistry: registry.luna.ogpu.cloud/patched-images

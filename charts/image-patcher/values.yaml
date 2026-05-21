@@ -86,7 +86,7 @@ kaniko:
   buildCache:
     enabled: false
     repo: ""
-    # Example: registry.luna.ogpu.cloud/patched-images/kaniko-build-cache
+    # Example: registry.luna.ogpu.cloud/image-patch-system/kaniko-build-cache
 
 replicaCount: 1
 
