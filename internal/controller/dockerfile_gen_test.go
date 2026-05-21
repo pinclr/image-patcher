@@ -29,7 +29,7 @@ deb http://10.11.32.173/ubuntu $VERSION_CODENAME-security main restricted univer
 deb http://10.11.32.173/ubuntu $VERSION_CODENAME-backports main restricted universe multiverse\n\
 " > /etc/apt/sources.list
 
-RUN apt-get update && apt-get install -y \
+RUN apt-get -q update && apt-get -q install -y \
     -o Dpkg::Options::="--force-confdef" \
     -o Dpkg::Options::="--force-confold" \
     tini \

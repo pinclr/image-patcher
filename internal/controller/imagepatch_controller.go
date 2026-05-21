@@ -484,7 +484,10 @@ func GenerateDockerfile(cr *omsv1alpha1.ImagePatch) string {
 	// every dependent package — aborts. DEBIAN_FRONTEND=noninteractive
 	// alone does not cover conffile conflicts.
 	if cr.Spec.APT != nil && len(cr.Spec.APT.Install) > 0 {
-		sb.WriteString("RUN apt-get update && apt-get install -y \\\n")
+		// -q silences the per-line Get:/Hit:/Reading… progress chatter
+		// from both update and install. We don't go to -qq because that
+		// also implies --yes and we like the explicit -y signal.
+		sb.WriteString("RUN apt-get -q update && apt-get -q install -y \\\n")
 		sb.WriteString("    -o Dpkg::Options::=\"--force-confdef\" \\\n")
 		sb.WriteString("    -o Dpkg::Options::=\"--force-confold\" \\\n")
 		for _, pkg := range cr.Spec.APT.Install {
