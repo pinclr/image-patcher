@@ -73,7 +73,7 @@ kaniko:
 # caveat -- image-registry-secret must exist in image-patch-system
 # (controller's ns), not only in oms (build ns where Kaniko mounts it).
 dedup:
-  enabled: false
+  enabled: true
 
 config:
   defaultImageRegistry: registry.luna.ogpu.cloud/patched-images
