@@ -39,6 +39,24 @@ func TestClassifyLogTail(t *testing.T) {
 			want: FailureLabelBaseImageNotFound,
 		},
 		{
+			// Real Kaniko log captured against an internal Harbor when
+			// the user typoed a base-image path. The decisive line is
+			// "NOT_FOUND: repository <name> not found" -- a Harbor /
+			// OCI distribution code, distinct from the docker-hub
+			// "manifest for X not found" form.
+			name: "harbor repository not_found (real kaniko output)",
+			log: `INFO[0000] Retrieving image manifest registry.luna.ogpu.cloud/luna/ubuntu-25.04:latest
+INFO[0000] Retrieving image registry.luna.ogpu.cloud/luna/ubuntu-25.04:latest from registry registry.luna.ogpu.cloud
+ERRO[0000] Error while retrieving image from cache: registry.luna.ogpu.cloud/luna/ubuntu-25.04:latest unable to complete operation after 0 attempts, last error: GET https://registry.luna.ogpu.cloud/v2/luna/ubuntu-25.04/manifests/latest: NOT_FOUND: repository luna/ubuntu-25.04 not found
+error building image: unable to complete operation after 0 attempts, last error: GET https://registry.luna.ogpu.cloud/v2/luna/ubuntu-25.04/manifests/latest: NOT_FOUND: repository luna/ubuntu-25.04 not found`,
+			want: FailureLabelBaseImageNotFound,
+		},
+		{
+			name: "oci NAME_UNKNOWN repository miss",
+			log:  `error pulling image: NAME_UNKNOWN: repository name not known to registry`,
+			want: FailureLabelBaseImageNotFound,
+		},
+		{
 			name: "registry 401 unauthorized",
 			log:  `unauthorized: authentication required`,
 			want: FailureLabelAuthorizationNeeded,
@@ -112,15 +130,17 @@ GET https://private.io/v2/x/manifests/latest: MANIFEST_UNKNOWN: manifest unknown
 }
 
 // TestIsKnownFailureLabel locks down the sticky-classification contract:
-// every FailureLabel* must read as known, and anything else (legacy
-// "Build failed", empty string, free-form) must read as not-known so it
-// triggers a (re-)classification in handleExistingJob.
+// the three actionable labels must read as known so re-reconciles don't
+// downgrade them after the build Pod is GC'd, while ControllerInternalError
+// is intentionally NOT known so a CR initially mis-classified as CIE
+// (or one classified against an older keyword matrix) gets a chance to
+// upgrade on the next reconcile. Empty/legacy/free-form strings are
+// also not-known so they trigger fresh classification.
 func TestIsKnownFailureLabel(t *testing.T) {
 	known := []string{
 		FailureLabelBaseImageNotFound,
 		FailureLabelAuthorizationNeeded,
 		FailureLabelNetworkError,
-		FailureLabelControllerInternalError,
 	}
 	for _, s := range known {
 		if !IsKnownFailureLabel(s) {
@@ -128,6 +148,7 @@ func TestIsKnownFailureLabel(t *testing.T) {
 		}
 	}
 	unknown := []string{
+		FailureLabelControllerInternalError, // intentionally re-classifiable
 		"",
 		"Build failed",
 		"Build completed successfully",

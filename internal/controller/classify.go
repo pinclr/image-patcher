@@ -46,24 +46,26 @@ const (
 	FailureLabelControllerInternalError = "ControllerInternalError"
 )
 
-// IsKnownFailureLabel reports whether s is one of the FailureLabel*
-// constants -- i.e. a message that was already produced by a run of
-// classifyBuildFailure and shouldn't be re-classified. The Job's build
-// Pod is eventually garbage-collected, after which classifyBuildFailure
-// can no longer read its logs and would *downgrade* an accurate label
-// to ControllerInternalError. Treating known labels as sticky keeps
-// classifications stable across re-reconciles.
+// IsKnownFailureLabel reports whether s is a "good enough" classification
+// that should be preserved across re-reconciles. The build Pod is
+// eventually garbage-collected, after which classifyBuildFailure can no
+// longer read its logs and would always return
+// FailureLabelControllerInternalError -- so the three actionable labels
+// are sticky to prevent that silent downgrade.
 //
-// Empty strings, the legacy hard-coded "Build failed" message, and any
-// other free-form text all return false so they get (re-)classified on
-// the next reconcile -- which is also what backfills CRs that were
-// written by an older version of this controller.
+// FailureLabelControllerInternalError is deliberately NOT in this set.
+// It's the fallback bucket, so there's no accurate-label-to-protect:
+// re-classification can either keep it at CIE (no harm) or upgrade it
+// to one of the three actionable labels (the win we want, e.g. when a
+// later controller release adds new keyword patterns and an existing
+// failed CR should benefit). Empty strings, the legacy hard-coded
+// "Build failed" message, and any other free-form text similarly fall
+// through to (re-)classification.
 func IsKnownFailureLabel(s string) bool {
 	switch s {
 	case FailureLabelBaseImageNotFound,
 		FailureLabelAuthorizationNeeded,
-		FailureLabelNetworkError,
-		FailureLabelControllerInternalError:
+		FailureLabelNetworkError:
 		return true
 	}
 	return false
@@ -167,12 +169,27 @@ func classifyLogTail(logTail string) string {
 		}
 	}
 
-	// Image-not-in-registry. The "manifest for X not found" form is
-	// split-line in some registry implementations, so we check the two
-	// halves separately.
+	// Image-not-in-registry. Different registry implementations spell
+	// "the thing you asked for doesn't exist" differently, so we cover
+	// the main families:
+	//   - Docker registry / OCI standard manifest miss:
+	//       "MANIFEST_UNKNOWN: manifest unknown"
+	//   - Docker Hub textual form (sometimes split across lines):
+	//       "manifest for <ref> not found"
+	//   - OCI repository miss (registry hosts the namespace but no such
+	//     repo) -- spec name is NAME_UNKNOWN, text "name unknown":
+	//       "name_unknown" / "name unknown"
+	//   - Harbor / distribution proxy 404 on the whole repo:
+	//       "NOT_FOUND: repository <name> not found"
+	// All four mean "your baseImage doesn't exist where you said it
+	// does" from the user's point of view, so we collapse them onto a
+	// single label.
 	if strings.Contains(low, "manifest unknown") ||
 		strings.Contains(low, "manifest_unknown") ||
 		strings.Contains(low, "not found: manifest") ||
+		strings.Contains(low, "name unknown") ||
+		strings.Contains(low, "name_unknown") ||
+		strings.Contains(low, "not_found: repository") ||
 		(strings.Contains(low, "manifest for ") && strings.Contains(low, "not found")) {
 		return FailureLabelBaseImageNotFound
 	}
