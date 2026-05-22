@@ -32,16 +32,23 @@ import (
 // ImagePatch.Status.Message when a build fails. Downstream (oms-controller
 // /devpod/list) surfaces them as `failed: <label>` to the end user, so the
 // names are chosen to read well in that context and to make ownership of
-// the problem unambiguous: the first three blame user input, the fourth
-// is the "contact support" bucket.
+// the problem unambiguous: the first two blame user input, the third is
+// the "contact support" bucket.
 //
 // Deliberately a small fixed set -- false positives here either mis-blame
 // the user for our outages or tell our ops team to ignore something they
 // should be paged for. Anything we can't confidently pin on user input
 // falls through to FailureLabelControllerInternalError.
+//
+// "image-not-in-registry" and "auth required" deliberately collapse onto
+// the single FailureLabelInvalidImage: in practice many registries (Harbor
+// included) return 404 for unauthorized requests to avoid leaking which
+// repos exist, so the two cases are not reliably distinguishable from
+// log text alone. The actionable advice in either case is the same --
+// "check the image name and your credentials" -- so a single label is
+// both more honest and more useful than guessing.
 const (
-	FailureLabelBaseImageNotFound       = "BaseImageNotFound"
-	FailureLabelAuthorizationNeeded     = "AuthorizationNeeded"
+	FailureLabelInvalidImage            = "InvalidImage"
 	FailureLabelNetworkError            = "NetworkError"
 	FailureLabelControllerInternalError = "ControllerInternalError"
 )
@@ -76,8 +83,7 @@ const (
 // the devpod).
 func IsKnownFailureLabel(s string) bool {
 	switch s {
-	case FailureLabelBaseImageNotFound,
-		FailureLabelAuthorizationNeeded,
+	case FailureLabelInvalidImage,
 		FailureLabelNetworkError,
 		FailureLabelControllerInternalError:
 		return true
@@ -154,58 +160,64 @@ func classifyBuildFailure(ctx context.Context, kube kubernetes.Interface, job *b
 // split out so the keyword matrix can be unit-tested without an API
 // server. Order matters:
 //
-//  1. Auth is checked first. Private-registry pulls typically surface
-//     BOTH a 401 AND a MANIFEST_UNKNOWN line; the 401 is the actionable
-//     one ("your secret can't reach this registry") and BaseImageNotFound
-//     would mis-blame the user for a tag they got right.
-//  2. BaseImageNotFound next -- by this point auth has been ruled out so
-//     a manifest miss really does mean "no such image".
-//  3. NetworkError last among the positive matches; some Kaniko network
-//     failures (e.g. proxy 407) contain "unauthorized" but the real
-//     fix is operator-side network config, not user creds -- we accept
-//     that mis-classification as the rare case.
-//  4. Everything else -> ControllerInternalError.
+//  1. InvalidImage first -- the union of "auth required at the registry"
+//     and "image doesn't exist at the registry". Both share keywords
+//     that registries often interchange (Harbor returns 404 for
+//     unauthorized requests to avoid info-leak), and the actionable
+//     advice is the same on either branch.
+//  2. NetworkError -- DNS / TCP / proxy failures. Kept distinct because
+//     these are operator-side (proxy / mirror config) and the user has
+//     no lever to pull. Order-wise: a rare Kaniko proxy 407 would
+//     contain "unauthorized" and get mis-classed as InvalidImage --
+//     acceptable, since in our environment 407 is essentially never
+//     seen and the surrounding signal is usually clear enough that the
+//     operator can still triage from the logs.
+//  3. Everything else -> ControllerInternalError.
 func classifyLogTail(logTail string) string {
 	low := strings.ToLower(logTail)
 
-	// Auth-boundary failures. Covers private base-image pulls without
-	// creds AND patched-image push into a registry whose Secret the
-	// controller can't reach.
+	// InvalidImage: registry returned either an auth challenge or a
+	// not-found for the requested repo/tag. We treat these as one bucket
+	// because:
+	//   - Harbor returns 404 (NOT_FOUND) for unauthorized pulls to avoid
+	//     leaking which repos exist, so the two cases are not reliably
+	//     distinguishable from log text.
+	//   - The user-facing remediation is identical: check the image
+	//     name AND that your pull credentials cover it.
+	//
+	// Keywords covered:
+	//   - auth-boundary failures (private pull without creds, push
+	//     denied):
+	//       "unauthorized" / "401 unauthorized"
+	//       "authentication required"
+	//       "denied: requested access"
+	//       "no basic auth credentials"
+	//   - not-in-registry across registry implementations:
+	//       "MANIFEST_UNKNOWN: manifest unknown"  (OCI standard manifest miss)
+	//       "manifest for <ref> not found"        (Docker Hub textual)
+	//       "name unknown" / "name_unknown"       (OCI NAME_UNKNOWN)
+	//       "NOT_FOUND: repository <name> ..."    (Harbor / distribution 404)
 	for _, kw := range []string{
 		"unauthorized",
 		"authentication required",
 		"denied: requested access",
 		"no basic auth credentials",
 		"401 unauthorized",
+		"manifest unknown",
+		"manifest_unknown",
+		"not found: manifest",
+		"name unknown",
+		"name_unknown",
+		"not_found: repository",
 	} {
 		if strings.Contains(low, kw) {
-			return FailureLabelAuthorizationNeeded
+			return FailureLabelInvalidImage
 		}
 	}
-
-	// Image-not-in-registry. Different registry implementations spell
-	// "the thing you asked for doesn't exist" differently, so we cover
-	// the main families:
-	//   - Docker registry / OCI standard manifest miss:
-	//       "MANIFEST_UNKNOWN: manifest unknown"
-	//   - Docker Hub textual form (sometimes split across lines):
-	//       "manifest for <ref> not found"
-	//   - OCI repository miss (registry hosts the namespace but no such
-	//     repo) -- spec name is NAME_UNKNOWN, text "name unknown":
-	//       "name_unknown" / "name unknown"
-	//   - Harbor / distribution proxy 404 on the whole repo:
-	//       "NOT_FOUND: repository <name> not found"
-	// All four mean "your baseImage doesn't exist where you said it
-	// does" from the user's point of view, so we collapse them onto a
-	// single label.
-	if strings.Contains(low, "manifest unknown") ||
-		strings.Contains(low, "manifest_unknown") ||
-		strings.Contains(low, "not found: manifest") ||
-		strings.Contains(low, "name unknown") ||
-		strings.Contains(low, "name_unknown") ||
-		strings.Contains(low, "not_found: repository") ||
-		(strings.Contains(low, "manifest for ") && strings.Contains(low, "not found")) {
-		return FailureLabelBaseImageNotFound
+	// "manifest for <ref> not found" is split-line in some registry
+	// implementations, so we check the two halves separately.
+	if strings.Contains(low, "manifest for ") && strings.Contains(low, "not found") {
+		return FailureLabelInvalidImage
 	}
 
 	// Network / DNS issues -- apt mirror unreachable, curl timing out,
