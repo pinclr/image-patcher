@@ -110,3 +110,33 @@ GET https://private.io/v2/x/manifests/latest: MANIFEST_UNKNOWN: manifest unknown
 		})
 	}
 }
+
+// TestIsKnownFailureLabel locks down the sticky-classification contract:
+// every FailureLabel* must read as known, and anything else (legacy
+// "Build failed", empty string, free-form) must read as not-known so it
+// triggers a (re-)classification in handleExistingJob.
+func TestIsKnownFailureLabel(t *testing.T) {
+	known := []string{
+		FailureLabelBaseImageNotFound,
+		FailureLabelAuthorizationNeeded,
+		FailureLabelNetworkError,
+		FailureLabelControllerInternalError,
+	}
+	for _, s := range known {
+		if !IsKnownFailureLabel(s) {
+			t.Errorf("IsKnownFailureLabel(%q) = false, want true", s)
+		}
+	}
+	unknown := []string{
+		"",
+		"Build failed",
+		"Build completed successfully",
+		"some random text",
+		"baseimagenotfound", // case-sensitive on purpose
+	}
+	for _, s := range unknown {
+		if IsKnownFailureLabel(s) {
+			t.Errorf("IsKnownFailureLabel(%q) = true, want false", s)
+		}
+	}
+}

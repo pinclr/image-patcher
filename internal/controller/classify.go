@@ -46,6 +46,29 @@ const (
 	FailureLabelControllerInternalError = "ControllerInternalError"
 )
 
+// IsKnownFailureLabel reports whether s is one of the FailureLabel*
+// constants -- i.e. a message that was already produced by a run of
+// classifyBuildFailure and shouldn't be re-classified. The Job's build
+// Pod is eventually garbage-collected, after which classifyBuildFailure
+// can no longer read its logs and would *downgrade* an accurate label
+// to ControllerInternalError. Treating known labels as sticky keeps
+// classifications stable across re-reconciles.
+//
+// Empty strings, the legacy hard-coded "Build failed" message, and any
+// other free-form text all return false so they get (re-)classified on
+// the next reconcile -- which is also what backfills CRs that were
+// written by an older version of this controller.
+func IsKnownFailureLabel(s string) bool {
+	switch s {
+	case FailureLabelBaseImageNotFound,
+		FailureLabelAuthorizationNeeded,
+		FailureLabelNetworkError,
+		FailureLabelControllerInternalError:
+		return true
+	}
+	return false
+}
+
 // buildPodLogTailLines bounds how much of the Kaniko pod's stdout we pull
 // when classifying a failure. Kaniko's terminal error block sits at the
 // very end of the log; 200 lines is plenty to capture it without hauling

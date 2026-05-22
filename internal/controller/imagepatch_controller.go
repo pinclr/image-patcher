@@ -228,7 +228,19 @@ func (r *ImagePatchReconciler) handleExistingJob(ctx context.Context, imagePatch
 		// to the end user, so they can tell at a glance whether the
 		// fix is on their side (BaseImageNotFound, AuthorizationNeeded,
 		// NetworkError) or ours (ControllerInternalError).
-		message = classifyBuildFailure(ctx, r.Kubernetes, job)
+		//
+		// Already-classified messages are sticky: re-running the
+		// classifier after the build Pod has been GC'd would always
+		// return ControllerInternalError (logs unreachable) and would
+		// silently downgrade an accurate label. Anything else --
+		// empty string, the legacy "Build failed", or free-form text
+		// -- gets (re-)classified, which is also how we backfill CRs
+		// left in Phase=Failed by an older version of this controller.
+		if IsKnownFailureLabel(imagePatch.Status.Message) {
+			message = imagePatch.Status.Message
+		} else {
+			message = classifyBuildFailure(ctx, r.Kubernetes, job)
+		}
 	} else if job.Status.Active > 0 {
 		newPhase = "Running"
 		message = "Build is running"
@@ -239,7 +251,16 @@ func (r *ImagePatchReconciler) handleExistingJob(ctx context.Context, imagePatch
 		return ctrl.Result{RequeueAfter: runningPhaseRequeueAfter}, nil
 	}
 
-	if imagePatch.Status.Phase != newPhase {
+	// Update on either a phase transition OR a stale message. The latter
+	// covers the backfill case: a CR may already sit in Phase=Failed with
+	// message "Build failed" written by the pre-classification controller;
+	// without the message check the guard would short-circuit and the
+	// user-facing string would never get refreshed. recordTerminalBuild
+	// is gated on the phase transition specifically so message-only
+	// rewrites don't double-count the build metric.
+	phaseChanged := imagePatch.Status.Phase != newPhase
+	messageChanged := imagePatch.Status.Message != message
+	if phaseChanged || messageChanged {
 		imagePatch.Status.Phase = newPhase
 		imagePatch.Status.Message = message
 		if err := r.Status().Update(ctx, imagePatch); err != nil {
@@ -247,8 +268,10 @@ func (r *ImagePatchReconciler) handleExistingJob(ctx context.Context, imagePatch
 			l.Error(err, "Failed to update ImagePatch status", "phase", newPhase)
 			return ctrl.Result{}, err
 		}
-		recordTerminalBuild(newPhase, imagePatch.Status.Image, job)
-		l.Info("Updated ImagePatch status", "phase", newPhase)
+		if phaseChanged {
+			recordTerminalBuild(newPhase, imagePatch.Status.Image, job)
+		}
+		l.Info("Updated ImagePatch status", "phase", newPhase, "message", message)
 	}
 
 	// Terminal phases need no requeue; the CR is done. While Running, we
