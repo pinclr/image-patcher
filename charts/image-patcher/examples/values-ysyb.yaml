@@ -50,15 +50,21 @@ kaniko:
   # small risk of missing changes from unusual write patterns -- safe
   # for our patch shapes (apt/pip/shell). singleSnapshot is left off
   # because we DO want per-RUN build-cache reuse across repeated
-  # builds. ignorePaths trims classic throwaway dirs that ML installs
-  # accumulate, which shrinks both snapshot time and final image size.
+  # builds.
+  #
+  # ignorePaths intentionally NOT set: tried /var/cache/apt,
+  # /var/lib/apt/lists, /root/.cache/pip, /tmp and hit
+  #     "Couldn't create temporary file /tmp/apt.conf.XXX for
+  #     passing config to apt-key"
+  # during apt-get update -- apt-key needs to write to /tmp at
+  # build time, and Kaniko's --ignore-path makes the path
+  # effectively unusable for writes (despite the docs framing it
+  # as snapshot-only). The other three paths are similarly
+  # write-targets during apt/pip install. Until we have a path
+  # that's truly write-free during build (rare), skip ignorePaths
+  # and rely on snapshotMode=redo for the bulk of the speedup.
   buildOptions:
     snapshotMode: redo
-    ignorePaths:
-      - /var/cache/apt
-      - /var/lib/apt/lists
-      - /root/.cache/pip
-      - /tmp
 
 config:
   defaultImageRegistry: registry.luna.ogpu.cloud/patched-images
