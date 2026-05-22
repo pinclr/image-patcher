@@ -63,6 +63,52 @@ type ImagePatchSpec struct {
 
 	Entrypoint []string `json:"entrypoint,omitempty"`
 	CMD        []string `json:"cmd,omitempty"`
+
+	// BuildOptions tunes Kaniko's snapshot and cache behavior for this
+	// specific patch. Fields are pass-through to Kaniko CLI flags. Any
+	// field left unset falls back to the chart-level default
+	// (controller env vars), and ultimately to Kaniko's own default.
+	// +optional
+	BuildOptions *BuildOptions `json:"buildOptions,omitempty"`
+}
+
+// BuildOptions exposes a curated subset of Kaniko flags that materially
+// affect build speed on large base images. Everything here is unset by
+// default; the controller only adds the corresponding flag to the build
+// Job's args when the field has a non-zero value.
+type BuildOptions struct {
+	// SnapshotMode controls how Kaniko detects filesystem changes after
+	// each RUN/COPY. "full" (Kaniko default) hashes every file -- safe but
+	// slow on large bases. "redo" uses overlayfs copy-up boundaries -- 5-10x
+	// faster, occasionally misses changes from unusual write patterns (mount
+	// manipulation, cross-overlay hardlinks). "time" uses mtime only --
+	// fastest, may miss atomic rewrites that preserve mtime.
+	// Maps to --snapshot-mode.
+	// +kubebuilder:validation:Enum=full;redo;time
+	// +optional
+	SnapshotMode string `json:"snapshotMode,omitempty"`
+
+	// SingleSnapshot makes Kaniko take ONE snapshot at the end of the
+	// build instead of after each RUN. Faster on first build but disables
+	// per-RUN build-cache reuse on subsequent builds, so it is a real
+	// trade-off, not a free win. Best for one-off / canary builds; avoid
+	// for patches that are rebuilt repeatedly with small changes.
+	// Maps to --single-snapshot.
+	// +optional
+	SingleSnapshot *bool `json:"singleSnapshot,omitempty"`
+
+	// IgnorePaths tells Kaniko to skip these paths during snapshotting.
+	// Useful for known-volatile dirs that aren't part of the final image
+	// (/var/cache, /tmp, build scratch). Each entry becomes a separate
+	// --ignore-path flag.
+	// +optional
+	IgnorePaths []string `json:"ignorePaths,omitempty"`
+
+	// CacheTTL caps how long Kaniko considers cached build layers fresh
+	// (Kaniko default: 336h / 2 weeks). Accepts Go duration syntax
+	// understood by Kaniko ("24h", "168h"). Maps to --cache-ttl.
+	// +optional
+	CacheTTL string `json:"cacheTTL,omitempty"`
 }
 
 // FromImage declares a multi-stage build source. The image is pulled
