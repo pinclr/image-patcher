@@ -100,6 +100,12 @@ spec:
             - name: KANIKO_RESOURCES
               value: {{ .Values.kaniko.resources | toJson | quote }}
             {{- end }}
+            {{- if .Values.dedup.enabled }}
+            - name: DEDUP_REPO
+              value: {{ required "dedup.repo is required when dedup.enabled" .Values.dedup.repo | quote }}
+            - name: DEDUP_TAG_PREFIX
+              value: {{ .Values.dedup.tagPrefix | quote }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

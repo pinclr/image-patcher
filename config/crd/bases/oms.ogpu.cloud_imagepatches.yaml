@@ -281,6 +281,13 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              dedupHit:
+                description: |-
+                  DedupHit is true when the controller short-circuited the build
+                  by re-tagging an existing image with the same SpecHash. Useful
+                  for distinguishing fresh builds from cache-served builds in
+                  metrics and post-mortems.
+                type: boolean
               image:
                 type: string
               jobName:
@@ -288,6 +295,13 @@ spec:
               message:
                 type: string
               phase:
+                type: string
+              specHash:
+                description: |-
+                  SpecHash is the short content-addressed identifier of the spec
+                  that produced this image (base digest + apt/pip/shell/...). Two
+                  CRs with the same SpecHash produce byte-identical images. Used
+                  internally for build dedup; surfaced for observability.
                 type: string
             type: object
         required:

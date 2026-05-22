@@ -205,6 +205,20 @@ type ImagePatchStatus struct {
 
 	// +optional
 	Message string `json:"message,omitempty"`
+
+	// SpecHash is the short content-addressed identifier of the spec
+	// that produced this image (base digest + apt/pip/shell/...). Two
+	// CRs with the same SpecHash produce byte-identical images. Used
+	// internally for build dedup; surfaced for observability.
+	// +optional
+	SpecHash string `json:"specHash,omitempty"`
+
+	// DedupHit is true when the controller short-circuited the build
+	// by re-tagging an existing image with the same SpecHash. Useful
+	// for distinguishing fresh builds from cache-served builds in
+	// metrics and post-mortems.
+	// +optional
+	DedupHit bool `json:"dedupHit,omitempty"`
 }
 
 // +kubebuilder:object:root=true

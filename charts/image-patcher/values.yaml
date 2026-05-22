@@ -283,6 +283,34 @@ dashboards:
   # Leave empty to land in the default folder.
   folderAnnotation: ""
 
+# Content-addressed build dedup. When enabled, the controller computes
+# a deterministic hash of every ImagePatch (resolved base digest + apt
+# / pip / shell / env / fromImages / user / entrypoint / cmd) and:
+#   - Before creating a Kaniko Job, HEADs `<repo>:<tagPrefix><hash>`.
+#     If the manifest exists, it retags it under the user's target and
+#     marks the CR Succeeded -- no Job, no base unpack.
+#   - If the manifest does not exist, the Kaniko Job is created with
+#     a SECOND --destination pointing at the dedup ref, so the next
+#     build with the same spec hits the fast path.
+#
+# The controller talks to the registry directly (HEAD + manifest PUT)
+# and needs the same dockerconfigjson Kaniko already mounts. The chart
+# expects an `image-registry-secret` to exist in config.buildNamespace
+# (the same one used by Kaniko); the chart adds the minimum RBAC
+# (get-secrets, resourceNames-locked) for the controller to read it.
+# No knob here -- if you need to use a different Secret name, change
+# both this code and the Kaniko mount in lockstep.
+dedup:
+  enabled: false
+  # Single repo where all dedup copies live. Independent from the
+  # buildCache repo (different data shape) and from spec.TargetImage
+  # (different lifecycle). Example:
+  #   registry.luna.ogpu.cloud/patched-images/dedup
+  repo: ""
+  # Prefix prepended to the spec hash in the dedup tag. Pure cosmetic
+  # so dedup tags are recognizable in registry UIs and retention rules.
+  tagPrefix: "patched-"
+
 # Extra args appended to the controller command line.
 extraArgs: []
 # Extra environment variables appended to the controller container.
