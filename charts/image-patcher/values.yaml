@@ -283,33 +283,27 @@ dashboards:
   # Leave empty to land in the default folder.
   folderAnnotation: ""
 
-# Content-addressed build dedup. When enabled, the controller computes
-# a deterministic hash of every ImagePatch (resolved base digest + apt
-# / pip / shell / env / fromImages / user / entrypoint / cmd) and:
-#   - Before creating a Kaniko Job, HEADs `<repo>:<tagPrefix><hash>`.
-#     If the manifest exists, it retags it under the user's target and
-#     marks the CR Succeeded -- no Job, no base unpack.
-#   - If the manifest does not exist, the Kaniko Job is created with
-#     a SECOND --destination pointing at the dedup ref, so the next
-#     build with the same spec hits the fast path.
+# Content-addressed build dedup. When on, the controller computes a
+# deterministic hash of every ImagePatch spec and Kaniko pushes the
+# build to TWO destinations in one shot:
+#   - <user destination>                    (the user-facing tag)
+#   - <user destination>-dedup-<spec hash>  (the content-addressed tag)
+# Same repo on both sides -- this matters: Kaniko uploads blobs once
+# into the first destination's repo, and the second destination just
+# writes a manifest pointing at those same blobs. Cross-repo would
+# fail with MANIFEST_BLOB_UNKNOWN, so the repo is deliberately not
+# configurable.
 #
-# The controller talks to the registry directly (HEAD + manifest PUT)
-# and needs the same dockerconfigjson Kaniko already mounts. The chart
-# expects an `image-registry-secret` to exist in config.buildNamespace
-# (the same one used by Kaniko); the chart adds the minimum RBAC
-# (get-secrets, resourceNames-locked) for the controller to read it.
-# No knob here -- if you need to use a different Secret name, change
-# both this code and the Kaniko mount in lockstep.
+# A future short-circuit path will HEAD the dedup tag before creating
+# the Job and skip the build on hit -- that needs registry auth wired
+# into the controller process and is deferred. Until then, dedup tags
+# accumulate passively so the eventual rollout is retroactive.
+#
+# Default on (same-repo push is ~free). Flip to false as a kill switch
+# if registry retention / quota / scanning rules can't cope with the
+# extra tags yet.
 dedup:
-  enabled: false
-  # Single repo where all dedup copies live. Independent from the
-  # buildCache repo (different data shape) and from spec.TargetImage
-  # (different lifecycle). Example:
-  #   registry.luna.ogpu.cloud/patched-images/dedup
-  repo: ""
-  # Prefix prepended to the spec hash in the dedup tag. Pure cosmetic
-  # so dedup tags are recognizable in registry UIs and retention rules.
-  tagPrefix: "patched-"
+  enabled: true
 
 # Extra args appended to the controller command line.
 extraArgs: []
