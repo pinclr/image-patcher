@@ -27,6 +27,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
@@ -221,8 +222,22 @@ func main() {
 	dedupEnabled := os.Getenv("DEDUP_ENABLED") != "false"
 	registryClient := dedupRegistryClient(dedupEnabled, setupLog)
 
+	// Typed clientset for subresource access (pods/log) -- the
+	// controller-runtime Client does not expose those. classifyBuildFailure
+	// uses it to tail the Kaniko build Pod when a Job fails; without this
+	// wiring the classifier silently returns ControllerInternalError on
+	// every failure, mis-blaming us for what is often bad-input
+	// (BaseImageNotFound, AuthorizationNeeded, etc.). Constructed once
+	// here so the reconciler doesn't redial per call.
+	kubeClient, err := kubernetes.NewForConfig(mgr.GetConfig())
+	if err != nil {
+		setupLog.Error(err, "unable to construct kubernetes clientset")
+		os.Exit(1)
+	}
+
 	if err := (&controller.ImagePatchReconciler{
 		Client:                   mgr.GetClient(),
+		Kubernetes:               kubeClient,
 		Scheme:                   mgr.GetScheme(),
 		DefaultRegistry:          os.Getenv("DEFAULT_IMAGE_REGISTRY"),
 		KanikoImage:              kanikoImage,
