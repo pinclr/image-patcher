@@ -314,11 +314,18 @@ dashboards:
 # secret in the release namespace.
 dedup:
   enabled: true
-  # Name of the dockerconfigjson Secret in the release namespace,
-  # mounted into the controller pod for HEAD + manifest retag. Must
-  # contain auth for every registry the operator may write dedup tags
-  # to -- in practice the same Secret Kaniko already uses.
+  # Name of the Secret in the release namespace holding docker config
+  # JSON, mounted into the controller pod for HEAD + manifest retag.
+  # Must contain auth for every registry the operator may write dedup
+  # tags to -- in practice the same Secret Kaniko already uses.
   dockerConfigSecret: image-registry-secret
+  # Key within that Secret whose value is the docker config JSON. The
+  # default ("config.json") matches what Kaniko mounts in
+  # internal/controller/imagepatch_controller.go; a typed
+  # kubernetes.io/dockerconfigjson Secret would instead use
+  # ".dockerconfigjson". They are distinct Secret shapes -- pick the
+  # one that matches how your Secret was created.
+  dockerConfigSecretKey: config.json
 
 # Extra args appended to the controller command line.
 extraArgs: []
