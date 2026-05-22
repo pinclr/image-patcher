@@ -88,6 +88,39 @@ kaniko:
     repo: ""
     # Example: registry.luna.ogpu.cloud/patched-images/kaniko-build-cache
 
+  # Resource requirements applied to every Kaniko build container.
+  # ephemeral-storage is the critical one: Kaniko extracts the base
+  # image into the container rootfs to execute RUN/COPY, so transient
+  # on-disk usage during a build is roughly:
+  #
+  #   extracted base (~1.5-2x the compressed size in the registry)
+  #   + apt/pip install output (1-3 GiB typical, more for ML stacks)
+  #   + Kaniko snapshot intermediate tarballs (a few GiB)
+  #   + /tmp scratch
+  #
+  # Rules of thumb for the request:
+  #   small base (alpine, distroless, busybox)       ->  5 GiB
+  #   ubuntu / debian + light packages               -> 10 GiB
+  #   ML stacks (PyTorch, TensorFlow + CUDA runtime) -> 30 GiB
+  #   large CUDA dev images (~20 GB final size)      -> 50 GiB
+  #
+  # Default 30Gi covers typical ML/CUDA workloads (the operator's main
+  # use case); override per environment for unusually small or large
+  # builds. Without a request, the scheduler is blind to this demand
+  # and may stack builds onto a disk-tight node, triggering kubelet
+  # disk-pressure eviction that takes unrelated pods down too.
+  #
+  # Limits are intentionally unset by default -- builds vary widely
+  # enough that a global ceiling would silently kill legitimate work.
+  # Set per-CR via a future BuildOptions extension if needed.
+  #
+  # Standard corev1.ResourceRequirements shape; serialized to JSON and
+  # passed to the controller as the KANIKO_RESOURCES env var.
+  resources:
+    requests:
+      ephemeral-storage: 30Gi
+    limits: {}
+
 replicaCount: 1
 
 leaderElection:

@@ -80,6 +80,10 @@ spec:
             - name: KANIKO_BUILD_CACHE_REPO
               value: {{ .Values.kaniko.buildCache.repo | quote }}
             {{- end }}
+            {{- if or .Values.kaniko.resources.requests .Values.kaniko.resources.limits }}
+            - name: KANIKO_RESOURCES
+              value: {{ .Values.kaniko.resources | toJson | quote }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

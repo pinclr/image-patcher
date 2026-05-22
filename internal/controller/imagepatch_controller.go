@@ -68,6 +68,14 @@ type ImagePatchReconciler struct {
 	// container registry). Independent from the local pull cache PVC above;
 	// both can be enabled at once.
 	KanikoBuildCacheRepo string
+	// KanikoResources is applied to every Kaniko build container. The
+	// critical field is requests.ephemeral-storage: large base
+	// extractions can use 15-25 GiB on the node's container rootfs,
+	// and without a request the scheduler is blind to that demand and
+	// may stack builds on a disk-tight node, triggering node-level
+	// disk-pressure eviction. Sourced from KANIKO_RESOURCES env (JSON
+	// of corev1.ResourceRequirements) emitted by the chart deployment.
+	KanikoResources corev1.ResourceRequirements
 }
 
 // +kubebuilder:rbac:groups=oms.ogpu.cloud,resources=imagepatches,verbs=get;list;watch;create;update;patch;delete
@@ -113,7 +121,7 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 		destination := r.resolveDestination(&imagePatch)
 		j := constructJob(&imagePatch, jobName, cmName, buildNs, destination, r.KanikoImage,
-			r.KanikoPullCachePVC, r.KanikoPullCacheMountPath, r.KanikoBuildCacheRepo)
+			r.KanikoPullCachePVC, r.KanikoPullCacheMountPath, r.KanikoBuildCacheRepo, r.KanikoResources)
 		// Owner references must live in the same namespace as the dependent
 		// (Kubernetes GC rejects cross-namespace ownership). When the build
 		// namespace matches the CR's namespace, set the controller reference
@@ -323,7 +331,7 @@ func (r *ImagePatchReconciler) createOrUpdateConfigMap(ctx context.Context, imag
 	return nil
 }
 
-func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destination, kanikoImage, pullCachePVC, pullCacheMountPath, buildCacheRepo string) *batchv1.Job {
+func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destination, kanikoImage, pullCachePVC, pullCacheMountPath, buildCacheRepo string, resources corev1.ResourceRequirements) *batchv1.Job {
 
 	backoffLimit := int32(0)
 	secretDefaultMode := int32(0664)
@@ -405,6 +413,7 @@ func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destin
 							Image:        kanikoImage,
 							Args:         args,
 							VolumeMounts: volumeMounts,
+							Resources:    resources,
 						},
 					},
 					Volumes: volumes,
