@@ -45,6 +45,16 @@ kaniko:
     enabled: true
     repo: registry.luna.ogpu.cloud/patched-images/kaniko-build-cache
 
+# Content-addressed dedup. Kaniko pushes every successful build to a
+# tag derived from the spec hash, in addition to spec.TargetImage.
+# The controller does not yet HEAD this repo to short-circuit builds
+# (that needs registry auth wired into the controller process); for
+# now the dedup tags accumulate passively in registry so that future
+# enablement is retroactive.
+dedup:
+  enabled: true
+  repo: registry.luna.ogpu.cloud/patched-images/dedup
+
   # Build-time tuning for this environment's ML/CUDA workloads. `redo`
   # snapshot mode cuts snapshot-scan time 5-10x on large bases at a
   # small risk of missing changes from unusual write patterns -- safe

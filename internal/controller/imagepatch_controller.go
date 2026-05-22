@@ -82,6 +82,19 @@ type ImagePatchReconciler struct {
 	// disk-pressure eviction. Sourced from KANIKO_RESOURCES env (JSON
 	// of corev1.ResourceRequirements) emitted by the chart deployment.
 	KanikoResources corev1.ResourceRequirements
+	// DedupRepo is the registry path (no tag) where every successful
+	// Kaniko build pushes a content-addressed copy of its output
+	// (alongside the user's spec.TargetImage). The controller does NOT
+	// yet HEAD this repo to short-circuit builds -- that follow-up
+	// needs a registry client and a strategy for sharing the existing
+	// image-registry-secret with the controller process, which is
+	// deferred. Until then, dedup data accumulates passively in
+	// registry; an empty DedupRepo disables the second --destination.
+	DedupRepo string
+	// DedupTagPrefix is prepended to the hex spec hash to form the
+	// dedup tag (e.g. "patched-abc123def456"). Pure cosmetics; lets
+	// operators recognize dedup tags in registry UIs.
+	DedupTagPrefix string
 }
 
 // +kubebuilder:rbac:groups=oms.ogpu.cloud,resources=imagepatches,verbs=get;list;watch;create;update;patch;delete
@@ -126,10 +139,20 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 
 		destination := r.resolveDestination(&imagePatch)
+
+		// Compute the content-addressed dedup ref (same registry path,
+		// tag = patched-<spec hash>). Kaniko will push to this tag in
+		// addition to the user's destination so future builds with the
+		// same spec can short-circuit -- the short-circuit logic itself
+		// is deferred to a follow-up that wires registry auth into the
+		// controller process.
+		specHash, dedupRef := r.computeDedup(&imagePatch)
+		_ = specHash // recorded on Status by handleExistingJob once the Job lands.
+
 		buildOpts := mergeBuildOptions(r.DefaultBuildOptions, imagePatch.Spec.BuildOptions)
 		j := constructJob(&imagePatch, jobName, cmName, buildNs, destination, r.KanikoImage,
 			r.KanikoPullCachePVC, r.KanikoPullCacheMountPath, r.KanikoBuildCacheRepo,
-			r.KanikoResources, buildOpts)
+			r.KanikoResources, buildOpts, dedupRef)
 		// Owner references must live in the same namespace as the dependent
 		// (Kubernetes GC rejects cross-namespace ownership). When the build
 		// namespace matches the CR's namespace, set the controller reference
@@ -339,7 +362,7 @@ func (r *ImagePatchReconciler) createOrUpdateConfigMap(ctx context.Context, imag
 	return nil
 }
 
-func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destination, kanikoImage, pullCachePVC, pullCacheMountPath, buildCacheRepo string, resources corev1.ResourceRequirements, buildOpts omsv1alpha1.BuildOptions) *batchv1.Job {
+func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destination, kanikoImage, pullCachePVC, pullCacheMountPath, buildCacheRepo string, resources corev1.ResourceRequirements, buildOpts omsv1alpha1.BuildOptions, dedupDestination string) *batchv1.Job {
 
 	backoffLimit := int32(0)
 	secretDefaultMode := int32(0664)
@@ -348,6 +371,13 @@ func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destin
 		"--dockerfile=/workspace/Dockerfile",
 		"--context=/workspace/context",
 		"--destination=" + destination,
+	}
+	if dedupDestination != "" && dedupDestination != destination {
+		// Multi-destination push: Kaniko computes layers once and
+		// uploads blobs once; the second --destination just adds a tag
+		// reference. Lets dedup observe future builds without doubling
+		// upload time.
+		args = append(args, "--destination="+dedupDestination)
 	}
 	if pullCachePVC != "" {
 		args = append(args, "--cache-dir="+pullCacheMountPath)
@@ -665,6 +695,28 @@ func buildOptionsArgs(opts omsv1alpha1.BuildOptions) []string {
 // Priority: CR spec.targetImage > DEFAULT_IMAGE_REGISTRY/<base-name>-patch:<base-tag>
 // The image name and tag are parsed from spec.baseImage.
 // e.g. registry.luna.ogpu.cloud/luna/ubuntu-22.04:latest -> ubuntu-22.04-patch:latest
+// computeDedup figures out the content-addressed dedup reference for
+// this CR. Returns (specHash, dedupRef) where dedupRef is the full
+// registry path Kaniko will push to alongside the user destination.
+// Empty when DedupRepo is unset.
+//
+// NOTE: today the hash uses Spec.BaseImage verbatim. If the base
+// reference is a mutable tag, content changes upstream produce a
+// stale hash. A follow-up will resolve the base to a digest via a
+// registry client before hashing -- that path is gated on figuring
+// out controller-side registry credentials.
+func (r *ImagePatchReconciler) computeDedup(cr *omsv1alpha1.ImagePatch) (specHash, dedupRef string) {
+	if r.DedupRepo == "" {
+		return "", ""
+	}
+	h := ComputeSpecHash(&cr.Spec, "")
+	if h == "" {
+		return "", ""
+	}
+	tag := r.DedupTagPrefix + h
+	return h, r.DedupRepo + ":" + tag
+}
+
 func (r *ImagePatchReconciler) resolveDestination(cr *omsv1alpha1.ImagePatch) string {
 	if cr.Spec.TargetImage != "" {
 		return cr.Spec.TargetImage
