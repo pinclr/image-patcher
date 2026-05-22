@@ -36,9 +36,12 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
+	"github.com/go-logr/logr"
+
 	omsv1alpha1 "image-patch-operator/api/v1alpha1"
 	"image-patch-operator/internal/controller"
 	"image-patch-operator/internal/metrics"
+	"image-patch-operator/internal/registry"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -52,6 +55,32 @@ func init() {
 
 	utilruntime.Must(omsv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
+}
+
+// dedupRegistryClient constructs the registry client used for the
+// dedup short-circuit. Fail-open at startup: if dedup is disabled, or
+// the config path is missing / unreadable, we log and return nil --
+// the controller still runs (and Kaniko-side dedup writes still
+// happen via multi-destination push). Only the short-circuit (HEAD +
+// retag) is gated on a working client.
+//
+// REGISTRY_AUTH_CONFIG_PATH defaults to /registry/.docker/config.json,
+// matching the chart's mount path for the image-registry-secret.
+func dedupRegistryClient(dedupEnabled bool, log logr.Logger) *registry.Client {
+	if !dedupEnabled {
+		return nil
+	}
+	path := os.Getenv("REGISTRY_AUTH_CONFIG_PATH")
+	if path == "" {
+		path = "/registry/.docker/config.json"
+	}
+	c, err := registry.NewFromDockerConfig(path)
+	if err != nil {
+		log.Info("dedup short-circuit disabled: docker config not loadable; Kaniko-side dedup write is unaffected", "path", path, "err", err.Error())
+		return nil
+	}
+	log.Info("dedup short-circuit enabled", "configPath", path)
+	return c
 }
 
 // nolint:gocyclo
@@ -190,15 +219,8 @@ func main() {
 		pullCacheMountPath = "/cache"
 	}
 
-	// Typed clientset for subresource access (Pods/log) -- the
-	// controller-runtime Client doesn't expose those. Used by
-	// classifyBuildFailure to tail the Kaniko build Pod when a Job fails;
-	// constructed once here so the reconciler doesn't keep dialling.
-	kubeClient, err := kubernetes.NewForConfig(mgr.GetConfig())
-	if err != nil {
-		setupLog.Error(err, "unable to construct kubernetes clientset")
-		os.Exit(1)
-	}
+	dedupEnabled := os.Getenv("DEDUP_ENABLED") != "false"
+	registryClient := dedupRegistryClient(dedupEnabled, setupLog)
 
 	if err := (&controller.ImagePatchReconciler{
 		Client:                   mgr.GetClient(),
@@ -212,7 +234,8 @@ func main() {
 		BuildNamespace:           os.Getenv("BUILD_NAMESPACE"),
 		DefaultBuildOptions:      controller.BuildOptionsFromEnv(),
 		KanikoResources:          controller.KanikoResourcesFromEnv(setupLog),
-		DedupEnabled:             os.Getenv("DEDUP_ENABLED") != "false",
+		DedupEnabled:             dedupEnabled,
+		Registry:                 registryClient,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ImagePatch")
 		os.Exit(1)

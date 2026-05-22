@@ -37,6 +37,7 @@ import (
 
 	omsv1alpha1 "image-patch-operator/api/v1alpha1"
 	"image-patch-operator/internal/metrics"
+	"image-patch-operator/internal/registry"
 )
 
 // ImagePatchReconciler reconciles a ImagePatch object
@@ -97,6 +98,14 @@ type ImagePatchReconciler struct {
 	// DEDUP_ENABLED env (anything other than "false" treated as on, so
 	// missing env defaults to on).
 	DedupEnabled bool
+	// Registry is the OCI client used to short-circuit the build: HEAD
+	// the dedup ref before creating a Kaniko Job, and retag the
+	// existing manifest under the user destination on a hit. Nil
+	// disables the short-circuit (Kaniko still runs and writes the
+	// dedup tag as before); main wires nil when the docker config
+	// secret isn't mounted, so dedup-write keeps working even without
+	// controller-side registry auth.
+	Registry *registry.Client
 }
 
 // +kubebuilder:rbac:groups=oms.ogpu.cloud,resources=imagepatches,verbs=get;list;watch;create;update;patch;delete
@@ -149,14 +158,26 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		// pushes to both destinations in one build; the second tag is
 		// a manifest reference reusing the first's blobs (same repo =
 		// blob scope shared, so no MANIFEST_BLOB_UNKNOWN and no extra
-		// upload). Future short-circuit can HEAD this ref and skip the
-		// Job entirely -- deferred until controller-side registry auth
-		// lands.
+		// upload).
 		var specHash, dedupRef string
 		if r.DedupEnabled {
 			specHash, dedupRef = computeDedupRef(&imagePatch.Spec, destination)
 		}
-		_ = specHash // recorded on Status by handleExistingJob once the Job lands.
+
+		// Short-circuit: if a prior build with the same spec already
+		// produced the dedup tag, retag it under the user destination
+		// and skip the Job entirely. Fail-open: any registry error
+		// (HEAD/PUT) just falls through to the normal build path -- a
+		// flaky registry must not block builds, and the Kaniko Job will
+		// re-attempt the retag side-effect anyway via multi-destination
+		// push.
+		if dedupRef != "" && r.Registry != nil {
+			if done, err := r.tryDedupShortCircuit(ctx, &imagePatch, destination, dedupRef, specHash); err != nil {
+				return ctrl.Result{}, err
+			} else if done {
+				return ctrl.Result{}, nil
+			}
+		}
 
 		buildOpts := mergeBuildOptions(r.DefaultBuildOptions, imagePatch.Spec.BuildOptions)
 		j := constructJob(&imagePatch, jobName, cmName, buildNs, destination, r.KanikoImage,
@@ -284,6 +305,50 @@ func (r *ImagePatchReconciler) handleExistingJob(ctx context.Context, imagePatch
 	return ctrl.Result{}, nil
 }
 
+// tryDedupShortCircuit attempts to skip the Kaniko build by retagging
+// an existing dedup manifest under the user destination. Returns
+// (true, nil) when the short-circuit fired and the CR has been marked
+// Succeeded -- the caller must NOT proceed to create a Job. Returns
+// (false, nil) on a miss OR on any registry error (fail-open: a
+// flaky registry must not block builds, and the Kaniko build path
+// will write the dedup tag itself via multi-destination push). The
+// only path that returns a non-nil err is a failed Status.Update --
+// the retag has happened by then, so requeueing is safe (Status set
+// is idempotent; retag is, too, since the dst tag already points at
+// the same manifest).
+func (r *ImagePatchReconciler) tryDedupShortCircuit(ctx context.Context, cr *omsv1alpha1.ImagePatch, destination, dedupRef, specHash string) (bool, error) {
+	l := log.FromContext(ctx)
+
+	exists, err := r.Registry.Exists(ctx, dedupRef)
+	if err != nil {
+		l.Info("dedup HEAD failed; falling through to build", "dedupRef", dedupRef, "err", err.Error())
+		return false, nil
+	}
+	if !exists {
+		return false, nil
+	}
+
+	if err := r.Registry.Retag(ctx, dedupRef, destination); err != nil {
+		l.Info("dedup retag failed; falling through to build", "src", dedupRef, "dst", destination, "err", err.Error())
+		return false, nil
+	}
+
+	cr.Status.Phase = "Succeeded"
+	cr.Status.Message = "build skipped: content match in registry"
+	cr.Status.Image = destination
+	cr.Status.SpecHash = specHash
+	cr.Status.DedupHit = true
+	cr.Status.JobName = ""
+	if err := r.Status().Update(ctx, cr); err != nil {
+		metrics.RecordReconcileFailure(metrics.ReasonStatusUpdate)
+		l.Error(err, "dedup hit: status update failed; will retry", "dedupRef", dedupRef)
+		return false, err
+	}
+	metrics.RecordBuildResult(metrics.ResultSucceeded, destination, metrics.FailureReasonNone, true, time.Time{}, time.Time{})
+	l.Info("dedup hit: skipped build", "imagepatch", cr.Name, "dedupRef", dedupRef, "destination", destination, "specHash", specHash)
+	return true, nil
+}
+
 // recordTerminalBuild emits build metrics for a Succeeded/Failed transition.
 // Called only after the status update has succeeded, so a failed Status.Update
 // followed by a retry does not double-count. Non-terminal phases (Running) are
@@ -308,7 +373,7 @@ func recordTerminalBuild(newPhase, targetImage string, job *batchv1.Job) {
 	if job.Status.CompletionTime != nil {
 		end = job.Status.CompletionTime.Time
 	}
-	metrics.RecordBuildResult(result, targetImage, failureReason, start, end)
+	metrics.RecordBuildResult(result, targetImage, failureReason, false, start, end)
 }
 
 // jobFailureReason classifies a failed build into one of the bounded
