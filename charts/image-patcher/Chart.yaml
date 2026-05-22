@@ -3,7 +3,7 @@ name: image-patcher
 description: Helm chart for image-patch-operator, a Kubernetes operator that builds patched container images from ImagePatch CRs using Kaniko.
 type: application
 version: 0.3.2
-appVersion: "v0.1.19"
+appVersion: "v0.1.20"
 kubeVersion: ">=1.21.0-0"
 keywords:
   - kaniko
