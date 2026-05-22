@@ -284,26 +284,41 @@ dashboards:
   folderAnnotation: ""
 
 # Content-addressed build dedup. When on, the controller computes a
-# deterministic hash of every ImagePatch spec and Kaniko pushes the
-# build to TWO destinations in one shot:
-#   - <user destination>                    (the user-facing tag)
-#   - <user destination>-dedup-<spec hash>  (the content-addressed tag)
-# Same repo on both sides -- this matters: Kaniko uploads blobs once
-# into the first destination's repo, and the second destination just
-# writes a manifest pointing at those same blobs. Cross-repo would
-# fail with MANIFEST_BLOB_UNKNOWN, so the repo is deliberately not
-# configurable.
+# deterministic hash of every ImagePatch spec and:
 #
-# A future short-circuit path will HEAD the dedup tag before creating
-# the Job and skip the build on hit -- that needs registry auth wired
-# into the controller process and is deferred. Until then, dedup tags
-# accumulate passively so the eventual rollout is retroactive.
+#   1. Before creating a Kaniko Job, HEADs <userTag>-dedup-<hash> in
+#      the same repo as the user destination. On hit, the existing
+#      manifest is retagged under the user tag (pure manifest copy,
+#      same repo = blob scope shared) and the CR is marked Succeeded
+#      with Status.DedupHit=true. No Job is created.
+#   2. On miss, the build runs as normal and Kaniko pushes BOTH the
+#      user tag AND the dedup tag in one shot (multi-destination
+#      push). The next build with the same spec hits the fast path.
 #
-# Default on (same-repo push is ~free). Flip to false as a kill switch
-# if registry retention / quota / scanning rules can't cope with the
-# extra tags yet.
+# Same repo on both sides is load-bearing for step 2: cross-repo would
+# fail with MANIFEST_BLOB_UNKNOWN because blob scope is per-repo.
+#
+# The controller talks to the registry directly using the same
+# dockerconfigjson Kaniko mounts. The chart mounts that Secret into
+# the controller pod at /registry/.docker; see dockerConfigSecret
+# below. Cross-namespace caveat: the Secret must exist in the release
+# namespace ({{ .Release.Namespace }}). If the build namespace
+# differs (e.g. controller in image-patch-system, builds in oms), the
+# operator must provision an identical Secret in both -- the chart
+# does not copy it.
+#
+# Default on (Kaniko-side dedup-write is ~free; the short-circuit only
+# fires when the controller can reach the registry). Flip to false as
+# a kill switch if registry retention / quota / scanning rules can't
+# cope with the extra tags yet, or if you can't yet provision the
+# secret in the release namespace.
 dedup:
   enabled: true
+  # Name of the dockerconfigjson Secret in the release namespace,
+  # mounted into the controller pod for HEAD + manifest retag. Must
+  # contain auth for every registry the operator may write dedup tags
+  # to -- in practice the same Secret Kaniko already uses.
+  dockerConfigSecret: image-registry-secret
 
 # Extra args appended to the controller command line.
 extraArgs: []

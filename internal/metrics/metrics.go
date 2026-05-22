@@ -19,6 +19,7 @@ limitations under the License.
 package metrics
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
@@ -70,9 +71,9 @@ var (
 		prometheus.CounterOpts{
 			Namespace: namespace,
 			Name:      "builds_total",
-			Help:      "Image builds that reached a terminal state, by result, target image, and failure reason (none for successes).",
+			Help:      "Image builds that reached a terminal state, by result, target image, failure reason (none for successes), and whether the build was short-circuited via content-addressed dedup (dedup_hit=true means no Kaniko Job ran).",
 		},
-		[]string{"result", "registry", "image", "failure_reason"},
+		[]string{"result", "registry", "image", "failure_reason", "dedup_hit"},
 	)
 
 	buildDurationSeconds = prometheus.NewHistogramVec(
@@ -131,19 +132,25 @@ func init() {
 // the failure_reason label since it would inflate cardinality without much
 // query value.
 //
+// dedupHit=true marks builds that were short-circuited by the controller's
+// content-addressed dedup path: no Kaniko Job ran, the existing manifest
+// was retagged. These are always result=Succeeded and have no meaningful
+// duration to histogram (registry RTT only), so the histogram is skipped.
+//
 // If startTime is zero (the kubelet has not stamped Job.Status.StartTime
 // yet), the duration observation is skipped to avoid recording a misleading
 // near-zero value; the counter still increments.
-func RecordBuildResult(result, targetImage, failureReason string, startTime, endTime time.Time) {
+func RecordBuildResult(result, targetImage, failureReason string, dedupHit bool, startTime, endTime time.Time) {
 	registry, image := SplitImageRef(targetImage)
 	buildsTotal.With(prometheus.Labels{
 		"result":         result,
 		"registry":       registry,
 		"image":          image,
 		"failure_reason": failureReason,
+		"dedup_hit":      strconv.FormatBool(dedupHit),
 	}).Inc()
 
-	if startTime.IsZero() {
+	if dedupHit || startTime.IsZero() {
 		return
 	}
 	if endTime.IsZero() {
