@@ -130,17 +130,16 @@ GET https://private.io/v2/x/manifests/latest: MANIFEST_UNKNOWN: manifest unknown
 }
 
 // TestIsKnownFailureLabel locks down the sticky-classification contract:
-// the three actionable labels must read as known so re-reconciles don't
-// downgrade them after the build Pod is GC'd, while ControllerInternalError
-// is intentionally NOT known so a CR initially mis-classified as CIE
-// (or one classified against an older keyword matrix) gets a chance to
-// upgrade on the next reconcile. Empty/legacy/free-form strings are
-// also not-known so they trigger fresh classification.
+// all four FailureLabel* values are sticky so re-reconciles don't
+// re-derive (and possibly downgrade) them, while legacy / empty /
+// free-form messages fall through to fresh classification -- the
+// backfill path for CRs left by an older controller.
 func TestIsKnownFailureLabel(t *testing.T) {
 	known := []string{
 		FailureLabelBaseImageNotFound,
 		FailureLabelAuthorizationNeeded,
 		FailureLabelNetworkError,
+		FailureLabelControllerInternalError,
 	}
 	for _, s := range known {
 		if !IsKnownFailureLabel(s) {
@@ -148,7 +147,6 @@ func TestIsKnownFailureLabel(t *testing.T) {
 		}
 	}
 	unknown := []string{
-		FailureLabelControllerInternalError, // intentionally re-classifiable
 		"",
 		"Build failed",
 		"Build completed successfully",

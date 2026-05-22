@@ -46,26 +46,40 @@ const (
 	FailureLabelControllerInternalError = "ControllerInternalError"
 )
 
-// IsKnownFailureLabel reports whether s is a "good enough" classification
-// that should be preserved across re-reconciles. The build Pod is
-// eventually garbage-collected, after which classifyBuildFailure can no
-// longer read its logs and would always return
-// FailureLabelControllerInternalError -- so the three actionable labels
-// are sticky to prevent that silent downgrade.
+// IsKnownFailureLabel reports whether s is one of the FailureLabel*
+// constants -- i.e. a message produced by a previous run of
+// classifyBuildFailure that should be preserved across re-reconciles
+// rather than re-derived. Two motivations:
 //
-// FailureLabelControllerInternalError is deliberately NOT in this set.
-// It's the fallback bucket, so there's no accurate-label-to-protect:
-// re-classification can either keep it at CIE (no harm) or upgrade it
-// to one of the three actionable labels (the win we want, e.g. when a
-// later controller release adds new keyword patterns and an existing
-// failed CR should benefit). Empty strings, the legacy hard-coded
-// "Build failed" message, and any other free-form text similarly fall
-// through to (re-)classification.
+//  1. The build Pod is eventually garbage-collected. After that,
+//     classifyBuildFailure can no longer read logs and would always
+//     return FailureLabelControllerInternalError -- silently downgrading
+//     any accurate label sitting on the CR.
+//  2. Re-running the matcher on a CR that is already FailureLabelControllerInternalError
+//     either returns CIE again (no signal, just wasted log fetches) or
+//     "upgrades" it to a different label that the previous run also
+//     should have produced -- which is a bug in the matcher, not a
+//     runtime concern. The right place to address mis-classification
+//     is to widen the high-priority matchers (cf. the Harbor
+//     NOT_FOUND: repository pattern added alongside this change), not
+//     to keep churning the classifier at runtime hoping for a better
+//     answer.
+//
+// Empty strings, the legacy hard-coded "Build failed" message, and any
+// other free-form text fall through to (re-)classification, which is
+// how handleExistingJob backfills CRs left by older controllers.
+//
+// Knock-on: a CR mis-classified by an older release of this code will
+// keep its stale label after a controller upgrade. The recovery path
+// is operator-side: `kubectl patch imagepatch ... --subresource=status
+// --type=merge -p '{"status":{"message":""}}'` (or just delete + recreate
+// the devpod).
 func IsKnownFailureLabel(s string) bool {
 	switch s {
 	case FailureLabelBaseImageNotFound,
 		FailureLabelAuthorizationNeeded,
-		FailureLabelNetworkError:
+		FailureLabelNetworkError,
+		FailureLabelControllerInternalError:
 		return true
 	}
 	return false
