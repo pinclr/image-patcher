@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -40,6 +41,13 @@ import (
 // ImagePatchReconciler reconciles a ImagePatch object
 type ImagePatchReconciler struct {
 	client.Client
+	// Kubernetes is a typed clientset held alongside the controller-runtime
+	// Client because the latter cannot reach subresources like Pods/log.
+	// classifyBuildFailure uses it to tail the Kaniko build Pod's stdout
+	// for failure-cause classification; when nil (e.g. in unit tests that
+	// don't wire an API server) failure classification degrades to
+	// FailureLabelControllerInternalError -- the safe default.
+	Kubernetes      kubernetes.Interface
 	Scheme          *runtime.Scheme
 	DefaultRegistry string
 	KanikoImage     string
@@ -75,6 +83,8 @@ type ImagePatchReconciler struct {
 // +kubebuilder:rbac:groups=oms.ogpu.cloud,resources=imagepatches/finalizers,verbs=update
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list
+// +kubebuilder:rbac:groups="",resources=pods/log,verbs=get
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -174,7 +184,13 @@ func (r *ImagePatchReconciler) handleExistingJob(ctx context.Context, imagePatch
 		message = "Build completed successfully"
 	} else if job.Status.Failed > 0 {
 		newPhase = "Failed"
-		message = "Build failed"
+		// Replace the previous hard-coded "Build failed" with a
+		// classification label drawn from the build Pod's log tail. The
+		// downstream oms-controller renders this as `failed: <label>`
+		// to the end user, so they can tell at a glance whether the
+		// fix is on their side (BaseImageNotFound, AuthorizationNeeded,
+		// NetworkError) or ours (ControllerInternalError).
+		message = classifyBuildFailure(ctx, r.Kubernetes, job)
 	} else if job.Status.Active > 0 {
 		newPhase = "Running"
 		message = "Build is running"

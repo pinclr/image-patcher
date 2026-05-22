@@ -27,6 +27,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
@@ -189,8 +190,19 @@ func main() {
 		pullCacheMountPath = "/cache"
 	}
 
+	// Typed clientset for subresource access (Pods/log) -- the
+	// controller-runtime Client doesn't expose those. Used by
+	// classifyBuildFailure to tail the Kaniko build Pod when a Job fails;
+	// constructed once here so the reconciler doesn't keep dialling.
+	kubeClient, err := kubernetes.NewForConfig(mgr.GetConfig())
+	if err != nil {
+		setupLog.Error(err, "unable to construct kubernetes clientset")
+		os.Exit(1)
+	}
+
 	if err := (&controller.ImagePatchReconciler{
 		Client:                   mgr.GetClient(),
+		Kubernetes:               kubeClient,
 		Scheme:                   mgr.GetScheme(),
 		DefaultRegistry:          os.Getenv("DEFAULT_IMAGE_REGISTRY"),
 		KanikoImage:              kanikoImage,
