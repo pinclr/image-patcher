@@ -799,17 +799,26 @@ func buildOptionsArgs(opts omsv1alpha1.BuildOptions) []string {
 // The image name and tag are parsed from spec.baseImage.
 // e.g. registry.luna.ogpu.cloud/luna/ubuntu-22.04:latest -> ubuntu-22.04-patch:latest
 // computeDedupRef derives the content-addressed dedup reference from
-// the resolved user destination. Same repo, tag = <user tag>-dedup-
-// <spec hash>. Same-repo is load-bearing: Kaniko multi-destination
-// push uploads blobs once into the first destination's repo, and the
+// the resolved user destination. Same repo as destination, tag =
+// "dedup-<spec hash>" -- purely content-addressed, the user tag is
+// NOT part of the dedup tag. This matters when consumers generate a
+// new user tag per build (e.g. one tag per devbox instance: tag like
+// "latest-<instanceID>"): the spec content is identical across all
+// of them, so all builds must converge on a single dedup tag,
+// otherwise the short-circuit never fires for non-stable user tags.
+// healthcheck happens to use a stable :latest tag and would work
+// even with the old <userTag>-dedup-<hash> scheme; dev55-style CRs
+// with per-instance suffixes would not.
+//
+// Same-repo is still load-bearing: Kaniko multi-destination push
+// uploads blobs once into the first destination's repo, and the
 // second destination only writes a manifest. Cross-repo would fail
-// with MANIFEST_BLOB_UNKNOWN because blob scope is per-repo and the
-// second manifest references blobs that aren't in its repo.
+// with MANIFEST_BLOB_UNKNOWN.
 //
 // Returns ("", "") when destination is empty or the hash can't be
-// computed. Returns the hash but no ref when destination has no tag
-// component to extend -- defensive; resolveDestination always emits
-// "<repo>:<tag>", so in practice this branch is unreachable.
+// computed. Returns the hash but no ref when destination has no
+// repo:tag shape to split -- defensive; resolveDestination always
+// emits "<repo>:<tag>", so in practice this branch is unreachable.
 //
 // NOTE: today the hash uses Spec.BaseImage verbatim. If the base
 // reference is a mutable tag, content changes upstream produce a
@@ -823,11 +832,11 @@ func computeDedupRef(spec *omsv1alpha1.ImagePatchSpec, destination string) (spec
 	}
 	idx := strings.LastIndex(destination, ":")
 	if idx == -1 || idx < strings.LastIndex(destination, "/") {
-		// No tag to extend (digest ref or bare repo). Skip the second
+		// No repo:tag shape (digest ref or bare repo). Skip the second
 		// destination rather than guess.
 		return h, ""
 	}
-	return h, destination + "-dedup-" + h
+	return h, destination[:idx] + ":dedup-" + h
 }
 
 func (r *ImagePatchReconciler) resolveDestination(cr *omsv1alpha1.ImagePatch) string {
