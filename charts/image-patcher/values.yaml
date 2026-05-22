@@ -286,7 +286,7 @@ dashboards:
 # Content-addressed build dedup. When on, the controller computes a
 # deterministic hash of every ImagePatch spec and:
 #
-#   1. Before creating a Kaniko Job, HEADs <userTag>-dedup-<hash> in
+#   1. Before creating a Kaniko Job, HEADs <repo>:dedup-<hash> in
 #      the same repo as the user destination. On hit, the existing
 #      manifest is retagged under the user tag (pure manifest copy,
 #      same repo = blob scope shared) and the CR is marked Succeeded
@@ -294,6 +294,11 @@ dashboards:
 #   2. On miss, the build runs as normal and Kaniko pushes BOTH the
 #      user tag AND the dedup tag in one shot (multi-destination
 #      push). The next build with the same spec hits the fast path.
+#
+# The dedup tag is purely content-addressed -- the user tag is NOT
+# part of it. So two CRs with identical spec but different user tags
+# (e.g. per-instance suffixes) converge on the same dedup tag and
+# share the short-circuit.
 #
 # Same repo on both sides is load-bearing for step 2: cross-repo would
 # fail with MANIFEST_BLOB_UNKNOWN because blob scope is per-repo.
