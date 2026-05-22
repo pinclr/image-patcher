@@ -102,6 +102,10 @@ spec:
             {{- end }}
             - name: DEDUP_ENABLED
               value: {{ .Values.dedup.enabled | quote }}
+            {{- if .Values.dedup.enabled }}
+            - name: REGISTRY_AUTH_CONFIG_PATH
+              value: /registry/.docker/config.json
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -127,3 +131,22 @@ spec:
             {{- toYaml .Values.resources | nindent 12 }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
+          {{- if .Values.dedup.enabled }}
+          volumeMounts:
+            - name: registry-auth
+              mountPath: /registry/.docker
+              readOnly: true
+          {{- end }}
+      {{- if .Values.dedup.enabled }}
+      volumes:
+        - name: registry-auth
+          secret:
+            # Must exist in the release namespace ({{ .Release.Namespace }}).
+            # The same dockerconfigjson Kaniko mounts in the build
+            # namespace -- if those are different namespaces (e.g. ysyb),
+            # the operator must provision the secret in both.
+            secretName: {{ .Values.dedup.dockerConfigSecret | quote }}
+            items:
+              - key: .dockerconfigjson
+                path: config.json
+      {{- end }}

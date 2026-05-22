@@ -51,13 +51,13 @@ func TestRecordBuildResult_IncrementsCounter(t *testing.T) {
 
 	start := time.Now().Add(-90 * time.Second)
 	end := start.Add(90 * time.Second)
-	RecordBuildResult(ResultSucceeded, "registry.example.com/app:v1", FailureReasonNone, start, end)
+	RecordBuildResult(ResultSucceeded, "registry.example.com/app:v1", FailureReasonNone, false, start, end)
 
 	got := testutil.ToFloat64(buildsTotal.WithLabelValues(
-		ResultSucceeded, "registry.example.com", "app:v1", FailureReasonNone,
+		ResultSucceeded, "registry.example.com", "app:v1", FailureReasonNone, "false",
 	))
 	if got != 1 {
-		t.Errorf("builds_total{result=succeeded,registry=registry.example.com,image=app:v1,failure_reason=none} = %v, want 1", got)
+		t.Errorf("builds_total{result=succeeded,registry=registry.example.com,image=app:v1,failure_reason=none,dedup_hit=false} = %v, want 1", got)
 	}
 
 	if n := testutil.CollectAndCount(buildDurationSeconds); n != 1 {
@@ -69,16 +69,33 @@ func TestRecordBuildResult_SkipsHistogramOnZeroStart(t *testing.T) {
 	buildsTotal.Reset()
 	buildDurationSeconds.Reset()
 
-	RecordBuildResult(ResultFailed, "registry.example.com/app:v1", FailureReasonBuild, time.Time{}, time.Now())
+	RecordBuildResult(ResultFailed, "registry.example.com/app:v1", FailureReasonBuild, false, time.Time{}, time.Now())
 
 	got := testutil.ToFloat64(buildsTotal.WithLabelValues(
-		ResultFailed, "registry.example.com", "app:v1", FailureReasonBuild,
+		ResultFailed, "registry.example.com", "app:v1", FailureReasonBuild, "false",
 	))
 	if got != 1 {
 		t.Errorf("builds_total counter not incremented when StartTime is zero: got %v", got)
 	}
 	if n := testutil.CollectAndCount(buildDurationSeconds); n != 0 {
 		t.Errorf("build_duration_seconds observed despite zero StartTime: series count = %d", n)
+	}
+}
+
+func TestRecordBuildResult_DedupHitSkipsHistogram(t *testing.T) {
+	buildsTotal.Reset()
+	buildDurationSeconds.Reset()
+
+	RecordBuildResult(ResultSucceeded, "registry.example.com/app:v1", FailureReasonNone, true, time.Now().Add(-time.Minute), time.Now())
+
+	got := testutil.ToFloat64(buildsTotal.WithLabelValues(
+		ResultSucceeded, "registry.example.com", "app:v1", FailureReasonNone, "true",
+	))
+	if got != 1 {
+		t.Errorf("builds_total{dedup_hit=true} = %v, want 1", got)
+	}
+	if n := testutil.CollectAndCount(buildDurationSeconds); n != 0 {
+		t.Errorf("build_duration_seconds observed on dedup hit: series count = %d, want 0", n)
 	}
 }
 
