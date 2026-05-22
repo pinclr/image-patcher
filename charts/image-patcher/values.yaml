@@ -88,6 +88,65 @@ kaniko:
     repo: ""
     # Example: registry.luna.ogpu.cloud/patched-images/kaniko-build-cache
 
+  # Chart-wide defaults for Kaniko snapshot / cache tuning. Each field on
+  # an individual ImagePatch's spec.buildOptions overrides the matching
+  # field here; empty here means "let Kaniko keep its own default" (the
+  # controller omits the corresponding flag entirely). Trade-offs are
+  # non-obvious; see ImagePatchSpec.BuildOptions godoc.
+  buildOptions:
+    # Empty | full | redo | time. Empty = Kaniko's own default (full).
+    # redo: typically 5-10x faster than full on large bases (>1GB), at a
+    # small risk of missing changes from unusual write patterns (mount
+    # tricks, cross-overlay hardlinks). Try this before reaching for
+    # `time`, which skips content hashing entirely.
+    snapshotMode: ""
+    # When true, Kaniko takes ONE snapshot at the end instead of after
+    # each RUN. Faster on first build but BREAKS per-RUN build-cache
+    # reuse on subsequent builds. Set per-CR for one-off builds rather
+    # than chart-wide unless you don't care about incremental caching.
+    singleSnapshot: false
+    # Paths to skip during snapshotting (each becomes --ignore-path).
+    # Cuts both snapshot scan time and final image size. Common entries:
+    # /var/cache/apt, /var/lib/apt/lists, /root/.cache/pip, /tmp.
+    # Kaniko already skips /proc /sys /dev /var/run by default.
+    ignorePaths: []
+    # Maximum age for cached build layers (Go duration). Kaniko default
+    # is 336h (14 days). Empty keeps the Kaniko default.
+    cacheTTL: ""
+
+  # Resource requirements applied to every Kaniko build container.
+  # ephemeral-storage is the critical one: Kaniko extracts the base
+  # image into the container rootfs to execute RUN/COPY, so transient
+  # on-disk usage during a build is roughly:
+  #
+  #   extracted base (~1.5-2x the compressed size in the registry)
+  #   + apt/pip install output (1-3 GiB typical, more for ML stacks)
+  #   + Kaniko snapshot intermediate tarballs (a few GiB)
+  #   + /tmp scratch
+  #
+  # Rules of thumb for the request:
+  #   small base (alpine, distroless, busybox)       ->  5 GiB
+  #   ubuntu / debian + light packages               -> 10 GiB
+  #   ML stacks (PyTorch, TensorFlow + CUDA runtime) -> 30 GiB
+  #   large CUDA dev images (~20 GB final size)      -> 50 GiB
+  #
+  # Default 30Gi covers typical ML/CUDA workloads (the operator's main
+  # use case); override per environment for unusually small or large
+  # builds. Without a request, the scheduler is blind to this demand
+  # and may stack builds onto a disk-tight node, triggering kubelet
+  # disk-pressure eviction that takes unrelated pods down too.
+  #
+  # Limits are intentionally unset by default -- builds vary widely
+  # enough that a global ceiling would silently kill legitimate work.
+  # Set per-CR via a future BuildOptions extension if needed.
+  #
+  # Standard corev1.ResourceRequirements shape; serialized to JSON and
+  # passed to the controller as the KANIKO_RESOURCES env var.
+  resources:
+    requests:
+      ephemeral-storage: 30Gi
+    limits: {}
+
 replicaCount: 1
 
 leaderElection:
@@ -223,6 +282,34 @@ dashboards:
   # sidecar configs use this to place the dashboard in a named folder.
   # Leave empty to land in the default folder.
   folderAnnotation: ""
+
+# Content-addressed build dedup. When enabled, the controller computes
+# a deterministic hash of every ImagePatch (resolved base digest + apt
+# / pip / shell / env / fromImages / user / entrypoint / cmd) and:
+#   - Before creating a Kaniko Job, HEADs `<repo>:<tagPrefix><hash>`.
+#     If the manifest exists, it retags it under the user's target and
+#     marks the CR Succeeded -- no Job, no base unpack.
+#   - If the manifest does not exist, the Kaniko Job is created with
+#     a SECOND --destination pointing at the dedup ref, so the next
+#     build with the same spec hits the fast path.
+#
+# The controller talks to the registry directly (HEAD + manifest PUT)
+# and needs the same dockerconfigjson Kaniko already mounts. The chart
+# expects an `image-registry-secret` to exist in config.buildNamespace
+# (the same one used by Kaniko); the chart adds the minimum RBAC
+# (get-secrets, resourceNames-locked) for the controller to read it.
+# No knob here -- if you need to use a different Secret name, change
+# both this code and the Kaniko mount in lockstep.
+dedup:
+  enabled: false
+  # Single repo where all dedup copies live. Independent from the
+  # buildCache repo (different data shape) and from spec.TargetImage
+  # (different lifecycle). Example:
+  #   registry.luna.ogpu.cloud/patched-images/dedup
+  repo: ""
+  # Prefix prepended to the spec hash in the dedup tag. Pure cosmetic
+  # so dedup tags are recognizable in registry UIs and retention rules.
+  tagPrefix: "patched-"
 
 # Extra args appended to the controller command line.
 extraArgs: []

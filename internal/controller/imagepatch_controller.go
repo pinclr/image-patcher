@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -76,6 +77,32 @@ type ImagePatchReconciler struct {
 	// container registry). Independent from the local pull cache PVC above;
 	// both can be enabled at once.
 	KanikoBuildCacheRepo string
+	// DefaultBuildOptions are chart-wide defaults for Kaniko snapshot /
+	// cache tuning. Each field on the CR's spec.buildOptions overrides
+	// the matching field here; if both are empty the corresponding flag
+	// is omitted entirely and Kaniko applies its own default.
+	DefaultBuildOptions omsv1alpha1.BuildOptions
+	// KanikoResources is applied to every Kaniko build container. The
+	// critical field is requests.ephemeral-storage: large base
+	// extractions can use 15-25 GiB on the node's container rootfs,
+	// and without a request the scheduler is blind to that demand and
+	// may stack builds on a disk-tight node, triggering node-level
+	// disk-pressure eviction. Sourced from KANIKO_RESOURCES env (JSON
+	// of corev1.ResourceRequirements) emitted by the chart deployment.
+	KanikoResources corev1.ResourceRequirements
+	// DedupRepo is the registry path (no tag) where every successful
+	// Kaniko build pushes a content-addressed copy of its output
+	// (alongside the user's spec.TargetImage). The controller does NOT
+	// yet HEAD this repo to short-circuit builds -- that follow-up
+	// needs a registry client and a strategy for sharing the existing
+	// image-registry-secret with the controller process, which is
+	// deferred. Until then, dedup data accumulates passively in
+	// registry; an empty DedupRepo disables the second --destination.
+	DedupRepo string
+	// DedupTagPrefix is prepended to the hex spec hash to form the
+	// dedup tag (e.g. "patched-abc123def456"). Pure cosmetics; lets
+	// operators recognize dedup tags in registry UIs.
+	DedupTagPrefix string
 }
 
 // +kubebuilder:rbac:groups=oms.ogpu.cloud,resources=imagepatches,verbs=get;list;watch;create;update;patch;delete
@@ -122,8 +149,20 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 
 		destination := r.resolveDestination(&imagePatch)
+
+		// Compute the content-addressed dedup ref (same registry path,
+		// tag = patched-<spec hash>). Kaniko will push to this tag in
+		// addition to the user's destination so future builds with the
+		// same spec can short-circuit -- the short-circuit logic itself
+		// is deferred to a follow-up that wires registry auth into the
+		// controller process.
+		specHash, dedupRef := r.computeDedup(&imagePatch)
+		_ = specHash // recorded on Status by handleExistingJob once the Job lands.
+
+		buildOpts := mergeBuildOptions(r.DefaultBuildOptions, imagePatch.Spec.BuildOptions)
 		j := constructJob(&imagePatch, jobName, cmName, buildNs, destination, r.KanikoImage,
-			r.KanikoPullCachePVC, r.KanikoPullCacheMountPath, r.KanikoBuildCacheRepo)
+			r.KanikoPullCachePVC, r.KanikoPullCacheMountPath, r.KanikoBuildCacheRepo,
+			r.KanikoResources, buildOpts, dedupRef)
 		// Owner references must live in the same namespace as the dependent
 		// (Kubernetes GC rejects cross-namespace ownership). When the build
 		// namespace matches the CR's namespace, set the controller reference
@@ -339,7 +378,7 @@ func (r *ImagePatchReconciler) createOrUpdateConfigMap(ctx context.Context, imag
 	return nil
 }
 
-func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destination, kanikoImage, pullCachePVC, pullCacheMountPath, buildCacheRepo string) *batchv1.Job {
+func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destination, kanikoImage, pullCachePVC, pullCacheMountPath, buildCacheRepo string, resources corev1.ResourceRequirements, buildOpts omsv1alpha1.BuildOptions, dedupDestination string) *batchv1.Job {
 
 	backoffLimit := int32(0)
 	secretDefaultMode := int32(0664)
@@ -349,12 +388,20 @@ func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destin
 		"--context=/workspace/context",
 		"--destination=" + destination,
 	}
+	if dedupDestination != "" && dedupDestination != destination {
+		// Multi-destination push: Kaniko computes layers once and
+		// uploads blobs once; the second --destination just adds a tag
+		// reference. Lets dedup observe future builds without doubling
+		// upload time.
+		args = append(args, "--destination="+dedupDestination)
+	}
 	if pullCachePVC != "" {
 		args = append(args, "--cache-dir="+pullCacheMountPath)
 	}
 	if buildCacheRepo != "" {
 		args = append(args, "--cache=true", "--cache-repo="+buildCacheRepo)
 	}
+	args = append(args, buildOptionsArgs(buildOpts)...)
 
 	volumeMounts := []corev1.VolumeMount{
 		{Name: "dockerfile", MountPath: "/workspace/Dockerfile", SubPath: "Dockerfile"},
@@ -421,6 +468,7 @@ func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destin
 							Image:        kanikoImage,
 							Args:         args,
 							VolumeMounts: volumeMounts,
+							Resources:    resources,
 						},
 					},
 					Volumes: volumes,
@@ -584,10 +632,107 @@ func GenerateDockerfile(cr *omsv1alpha1.ImagePatch) string {
 	return sb.String()
 }
 
+// BuildOptionsFromEnv reads the chart-wide build option defaults from
+// environment variables emitted by the Helm chart's deployment template.
+// Each variable corresponds 1:1 to a BuildOptions field so the chart can
+// surface them without growing a sidecar config format.
+//
+//	KANIKO_SNAPSHOT_MODE     -> SnapshotMode (full / redo / time)
+//	KANIKO_SINGLE_SNAPSHOT   -> SingleSnapshot ("true" / "false")
+//	KANIKO_IGNORE_PATHS      -> IgnorePaths (comma-separated)
+//	KANIKO_CACHE_TTL         -> CacheTTL (Go duration)
+func BuildOptionsFromEnv() omsv1alpha1.BuildOptions {
+	opts := omsv1alpha1.BuildOptions{
+		SnapshotMode: os.Getenv("KANIKO_SNAPSHOT_MODE"),
+		CacheTTL:     os.Getenv("KANIKO_CACHE_TTL"),
+	}
+	if v := os.Getenv("KANIKO_SINGLE_SNAPSHOT"); v != "" {
+		b := strings.EqualFold(v, "true") || v == "1"
+		opts.SingleSnapshot = &b
+	}
+	if v := os.Getenv("KANIKO_IGNORE_PATHS"); v != "" {
+		for _, p := range strings.Split(v, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				opts.IgnorePaths = append(opts.IgnorePaths, p)
+			}
+		}
+	}
+	return opts
+}
+
+// mergeBuildOptions returns the effective BuildOptions for a build:
+// CR-supplied fields win, otherwise the chart-wide default applies.
+// Designed to be order-independent and field-granular so a CR can
+// override one knob without restating the rest.
+func mergeBuildOptions(defaults omsv1alpha1.BuildOptions, override *omsv1alpha1.BuildOptions) omsv1alpha1.BuildOptions {
+	out := defaults
+	if override == nil {
+		return out
+	}
+	if override.SnapshotMode != "" {
+		out.SnapshotMode = override.SnapshotMode
+	}
+	if override.SingleSnapshot != nil {
+		v := *override.SingleSnapshot
+		out.SingleSnapshot = &v
+	}
+	if len(override.IgnorePaths) > 0 {
+		out.IgnorePaths = append([]string(nil), override.IgnorePaths...)
+	}
+	if override.CacheTTL != "" {
+		out.CacheTTL = override.CacheTTL
+	}
+	return out
+}
+
+// buildOptionsArgs renders the BuildOptions into Kaniko CLI flags.
+// Each zero-valued field is omitted so Kaniko keeps its own default
+// rather than receiving an empty-string flag.
+func buildOptionsArgs(opts omsv1alpha1.BuildOptions) []string {
+	var args []string
+	if opts.SnapshotMode != "" {
+		args = append(args, "--snapshot-mode="+opts.SnapshotMode)
+	}
+	if opts.SingleSnapshot != nil && *opts.SingleSnapshot {
+		args = append(args, "--single-snapshot")
+	}
+	for _, p := range opts.IgnorePaths {
+		if p != "" {
+			args = append(args, "--ignore-path="+p)
+		}
+	}
+	if opts.CacheTTL != "" {
+		args = append(args, "--cache-ttl="+opts.CacheTTL)
+	}
+	return args
+}
+
 // resolveDestination determines the target image for the build.
 // Priority: CR spec.targetImage > DEFAULT_IMAGE_REGISTRY/<base-name>-patch:<base-tag>
 // The image name and tag are parsed from spec.baseImage.
 // e.g. registry.luna.ogpu.cloud/luna/ubuntu-22.04:latest -> ubuntu-22.04-patch:latest
+// computeDedup figures out the content-addressed dedup reference for
+// this CR. Returns (specHash, dedupRef) where dedupRef is the full
+// registry path Kaniko will push to alongside the user destination.
+// Empty when DedupRepo is unset.
+//
+// NOTE: today the hash uses Spec.BaseImage verbatim. If the base
+// reference is a mutable tag, content changes upstream produce a
+// stale hash. A follow-up will resolve the base to a digest via a
+// registry client before hashing -- that path is gated on figuring
+// out controller-side registry credentials.
+func (r *ImagePatchReconciler) computeDedup(cr *omsv1alpha1.ImagePatch) (specHash, dedupRef string) {
+	if r.DedupRepo == "" {
+		return "", ""
+	}
+	h := ComputeSpecHash(&cr.Spec, "")
+	if h == "" {
+		return "", ""
+	}
+	tag := r.DedupTagPrefix + h
+	return h, r.DedupRepo + ":" + tag
+}
+
 func (r *ImagePatchReconciler) resolveDestination(cr *omsv1alpha1.ImagePatch) string {
 	if cr.Spec.TargetImage != "" {
 		return cr.Spec.TargetImage

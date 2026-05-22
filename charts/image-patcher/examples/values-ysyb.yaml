@@ -45,6 +45,37 @@ kaniko:
     enabled: true
     repo: registry.luna.ogpu.cloud/patched-images/kaniko-build-cache
 
+  # Build-time tuning for this environment's ML/CUDA workloads. `redo`
+  # snapshot mode cuts snapshot-scan time 5-10x on large bases at a
+  # small risk of missing changes from unusual write patterns -- safe
+  # for our patch shapes (apt/pip/shell). singleSnapshot is left off
+  # because we DO want per-RUN build-cache reuse across repeated
+  # builds.
+  #
+  # ignorePaths intentionally NOT set: tried /var/cache/apt,
+  # /var/lib/apt/lists, /root/.cache/pip, /tmp and hit
+  #     "Couldn't create temporary file /tmp/apt.conf.XXX for
+  #     passing config to apt-key"
+  # during apt-get update -- apt-key needs to write to /tmp at
+  # build time, and Kaniko's --ignore-path makes the path
+  # effectively unusable for writes (despite the docs framing it
+  # as snapshot-only). The other three paths are similarly
+  # write-targets during apt/pip install. Until we have a path
+  # that's truly write-free during build (rare), skip ignorePaths
+  # and rely on snapshotMode=redo for the bulk of the speedup.
+  buildOptions:
+    snapshotMode: redo
+
+# Content-addressed dedup. Kaniko pushes every successful build to a
+# tag derived from the spec hash, in addition to spec.TargetImage.
+# The controller does not yet HEAD this repo to short-circuit builds
+# (that needs registry auth wired into the controller process); for
+# now the dedup tags accumulate passively in registry so that future
+# enablement is retroactive.
+dedup:
+  enabled: true
+  repo: registry.luna.ogpu.cloud/patched-images/dedup
+
 config:
   defaultImageRegistry: registry.luna.ogpu.cloud/patched-images
   # All Kaniko build Jobs (and the chart-managed pull-cache PVC) land in
