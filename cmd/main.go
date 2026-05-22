@@ -53,16 +53,6 @@ func init() {
 	// +kubebuilder:scaffold:scheme
 }
 
-// dedupTagPrefixOrDefault keeps the chart-emitted prefix when set and
-// falls back to a sensible literal so dedup tags stay grep-able in
-// registry UIs even when an admin forgets to wire it.
-func dedupTagPrefixOrDefault(s string) string {
-	if s != "" {
-		return s
-	}
-	return "patched-"
-}
-
 // nolint:gocyclo
 func main() {
 	var metricsAddr string
@@ -210,8 +200,7 @@ func main() {
 		BuildNamespace:           os.Getenv("BUILD_NAMESPACE"),
 		DefaultBuildOptions:      controller.BuildOptionsFromEnv(),
 		KanikoResources:          controller.KanikoResourcesFromEnv(setupLog),
-		DedupRepo:                os.Getenv("DEDUP_REPO"),
-		DedupTagPrefix:           dedupTagPrefixOrDefault(os.Getenv("DEDUP_TAG_PREFIX")),
+		DedupEnabled:             os.Getenv("DEDUP_ENABLED") != "false",
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ImagePatch")
 		os.Exit(1)
