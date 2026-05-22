@@ -45,6 +45,21 @@ kaniko:
     enabled: true
     repo: registry.luna.ogpu.cloud/patched-images/kaniko-build-cache
 
+  # Build-time tuning for this environment's ML/CUDA workloads. `redo`
+  # snapshot mode cuts snapshot-scan time 5-10x on large bases at a
+  # small risk of missing changes from unusual write patterns -- safe
+  # for our patch shapes (apt/pip/shell). singleSnapshot is left off
+  # because we DO want per-RUN build-cache reuse across repeated
+  # builds. ignorePaths trims classic throwaway dirs that ML installs
+  # accumulate, which shrinks both snapshot time and final image size.
+  buildOptions:
+    snapshotMode: redo
+    ignorePaths:
+      - /var/cache/apt
+      - /var/lib/apt/lists
+      - /root/.cache/pip
+      - /tmp
+
 config:
   defaultImageRegistry: registry.luna.ogpu.cloud/patched-images
   # All Kaniko build Jobs (and the chart-managed pull-cache PVC) land in

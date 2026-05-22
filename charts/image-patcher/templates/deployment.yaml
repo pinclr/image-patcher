@@ -96,6 +96,10 @@ spec:
             - name: KANIKO_CACHE_TTL
               value: {{ . | quote }}
             {{- end }}
+            {{- if or .Values.kaniko.resources.requests .Values.kaniko.resources.limits }}
+            - name: KANIKO_RESOURCES
+              value: {{ .Values.kaniko.resources | toJson | quote }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

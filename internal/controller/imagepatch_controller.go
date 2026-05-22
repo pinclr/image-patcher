@@ -74,6 +74,14 @@ type ImagePatchReconciler struct {
 	// the matching field here; if both are empty the corresponding flag
 	// is omitted entirely and Kaniko applies its own default.
 	DefaultBuildOptions omsv1alpha1.BuildOptions
+	// KanikoResources is applied to every Kaniko build container. The
+	// critical field is requests.ephemeral-storage: large base
+	// extractions can use 15-25 GiB on the node's container rootfs,
+	// and without a request the scheduler is blind to that demand and
+	// may stack builds on a disk-tight node, triggering node-level
+	// disk-pressure eviction. Sourced from KANIKO_RESOURCES env (JSON
+	// of corev1.ResourceRequirements) emitted by the chart deployment.
+	KanikoResources corev1.ResourceRequirements
 }
 
 // +kubebuilder:rbac:groups=oms.ogpu.cloud,resources=imagepatches,verbs=get;list;watch;create;update;patch;delete
@@ -120,7 +128,8 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		destination := r.resolveDestination(&imagePatch)
 		buildOpts := mergeBuildOptions(r.DefaultBuildOptions, imagePatch.Spec.BuildOptions)
 		j := constructJob(&imagePatch, jobName, cmName, buildNs, destination, r.KanikoImage,
-			r.KanikoPullCachePVC, r.KanikoPullCacheMountPath, r.KanikoBuildCacheRepo, buildOpts)
+			r.KanikoPullCachePVC, r.KanikoPullCacheMountPath, r.KanikoBuildCacheRepo,
+			r.KanikoResources, buildOpts)
 		// Owner references must live in the same namespace as the dependent
 		// (Kubernetes GC rejects cross-namespace ownership). When the build
 		// namespace matches the CR's namespace, set the controller reference
@@ -330,7 +339,7 @@ func (r *ImagePatchReconciler) createOrUpdateConfigMap(ctx context.Context, imag
 	return nil
 }
 
-func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destination, kanikoImage, pullCachePVC, pullCacheMountPath, buildCacheRepo string, buildOpts omsv1alpha1.BuildOptions) *batchv1.Job {
+func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destination, kanikoImage, pullCachePVC, pullCacheMountPath, buildCacheRepo string, resources corev1.ResourceRequirements, buildOpts omsv1alpha1.BuildOptions) *batchv1.Job {
 
 	backoffLimit := int32(0)
 	secretDefaultMode := int32(0664)
@@ -413,6 +422,7 @@ func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destin
 							Image:        kanikoImage,
 							Args:         args,
 							VolumeMounts: volumeMounts,
+							Resources:    resources,
 						},
 					},
 					Volumes: volumes,

@@ -199,6 +199,7 @@ func main() {
 		KanikoBuildCacheRepo:     os.Getenv("KANIKO_BUILD_CACHE_REPO"),
 		BuildNamespace:           os.Getenv("BUILD_NAMESPACE"),
 		DefaultBuildOptions:      controller.BuildOptionsFromEnv(),
+		KanikoResources:          controller.KanikoResourcesFromEnv(setupLog),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ImagePatch")
 		os.Exit(1)
