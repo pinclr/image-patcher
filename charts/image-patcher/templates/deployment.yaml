@@ -80,6 +80,22 @@ spec:
             - name: KANIKO_BUILD_CACHE_REPO
               value: {{ .Values.kaniko.buildCache.repo | quote }}
             {{- end }}
+            {{- with .Values.kaniko.buildOptions.snapshotMode }}
+            - name: KANIKO_SNAPSHOT_MODE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if .Values.kaniko.buildOptions.singleSnapshot }}
+            - name: KANIKO_SINGLE_SNAPSHOT
+              value: "true"
+            {{- end }}
+            {{- with .Values.kaniko.buildOptions.ignorePaths }}
+            - name: KANIKO_IGNORE_PATHS
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- with .Values.kaniko.buildOptions.cacheTTL }}
+            - name: KANIKO_CACHE_TTL
+              value: {{ . | quote }}
+            {{- end }}
             {{- if or .Values.kaniko.resources.requests .Values.kaniko.resources.limits }}
             - name: KANIKO_RESOURCES
               value: {{ .Values.kaniko.resources | toJson | quote }}

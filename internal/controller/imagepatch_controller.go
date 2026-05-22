@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -68,6 +69,11 @@ type ImagePatchReconciler struct {
 	// container registry). Independent from the local pull cache PVC above;
 	// both can be enabled at once.
 	KanikoBuildCacheRepo string
+	// DefaultBuildOptions are chart-wide defaults for Kaniko snapshot /
+	// cache tuning. Each field on the CR's spec.buildOptions overrides
+	// the matching field here; if both are empty the corresponding flag
+	// is omitted entirely and Kaniko applies its own default.
+	DefaultBuildOptions omsv1alpha1.BuildOptions
 	// KanikoResources is applied to every Kaniko build container. The
 	// critical field is requests.ephemeral-storage: large base
 	// extractions can use 15-25 GiB on the node's container rootfs,
@@ -120,8 +126,10 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 
 		destination := r.resolveDestination(&imagePatch)
+		buildOpts := mergeBuildOptions(r.DefaultBuildOptions, imagePatch.Spec.BuildOptions)
 		j := constructJob(&imagePatch, jobName, cmName, buildNs, destination, r.KanikoImage,
-			r.KanikoPullCachePVC, r.KanikoPullCacheMountPath, r.KanikoBuildCacheRepo, r.KanikoResources)
+			r.KanikoPullCachePVC, r.KanikoPullCacheMountPath, r.KanikoBuildCacheRepo,
+			r.KanikoResources, buildOpts)
 		// Owner references must live in the same namespace as the dependent
 		// (Kubernetes GC rejects cross-namespace ownership). When the build
 		// namespace matches the CR's namespace, set the controller reference
@@ -331,7 +339,7 @@ func (r *ImagePatchReconciler) createOrUpdateConfigMap(ctx context.Context, imag
 	return nil
 }
 
-func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destination, kanikoImage, pullCachePVC, pullCacheMountPath, buildCacheRepo string, resources corev1.ResourceRequirements) *batchv1.Job {
+func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destination, kanikoImage, pullCachePVC, pullCacheMountPath, buildCacheRepo string, resources corev1.ResourceRequirements, buildOpts omsv1alpha1.BuildOptions) *batchv1.Job {
 
 	backoffLimit := int32(0)
 	secretDefaultMode := int32(0664)
@@ -347,6 +355,7 @@ func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destin
 	if buildCacheRepo != "" {
 		args = append(args, "--cache=true", "--cache-repo="+buildCacheRepo)
 	}
+	args = append(args, buildOptionsArgs(buildOpts)...)
 
 	volumeMounts := []corev1.VolumeMount{
 		{Name: "dockerfile", MountPath: "/workspace/Dockerfile", SubPath: "Dockerfile"},
@@ -575,6 +584,81 @@ func GenerateDockerfile(cr *omsv1alpha1.ImagePatch) string {
 	}
 
 	return sb.String()
+}
+
+// BuildOptionsFromEnv reads the chart-wide build option defaults from
+// environment variables emitted by the Helm chart's deployment template.
+// Each variable corresponds 1:1 to a BuildOptions field so the chart can
+// surface them without growing a sidecar config format.
+//
+//	KANIKO_SNAPSHOT_MODE     -> SnapshotMode (full / redo / time)
+//	KANIKO_SINGLE_SNAPSHOT   -> SingleSnapshot ("true" / "false")
+//	KANIKO_IGNORE_PATHS      -> IgnorePaths (comma-separated)
+//	KANIKO_CACHE_TTL         -> CacheTTL (Go duration)
+func BuildOptionsFromEnv() omsv1alpha1.BuildOptions {
+	opts := omsv1alpha1.BuildOptions{
+		SnapshotMode: os.Getenv("KANIKO_SNAPSHOT_MODE"),
+		CacheTTL:     os.Getenv("KANIKO_CACHE_TTL"),
+	}
+	if v := os.Getenv("KANIKO_SINGLE_SNAPSHOT"); v != "" {
+		b := strings.EqualFold(v, "true") || v == "1"
+		opts.SingleSnapshot = &b
+	}
+	if v := os.Getenv("KANIKO_IGNORE_PATHS"); v != "" {
+		for _, p := range strings.Split(v, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				opts.IgnorePaths = append(opts.IgnorePaths, p)
+			}
+		}
+	}
+	return opts
+}
+
+// mergeBuildOptions returns the effective BuildOptions for a build:
+// CR-supplied fields win, otherwise the chart-wide default applies.
+// Designed to be order-independent and field-granular so a CR can
+// override one knob without restating the rest.
+func mergeBuildOptions(defaults omsv1alpha1.BuildOptions, override *omsv1alpha1.BuildOptions) omsv1alpha1.BuildOptions {
+	out := defaults
+	if override == nil {
+		return out
+	}
+	if override.SnapshotMode != "" {
+		out.SnapshotMode = override.SnapshotMode
+	}
+	if override.SingleSnapshot != nil {
+		v := *override.SingleSnapshot
+		out.SingleSnapshot = &v
+	}
+	if len(override.IgnorePaths) > 0 {
+		out.IgnorePaths = append([]string(nil), override.IgnorePaths...)
+	}
+	if override.CacheTTL != "" {
+		out.CacheTTL = override.CacheTTL
+	}
+	return out
+}
+
+// buildOptionsArgs renders the BuildOptions into Kaniko CLI flags.
+// Each zero-valued field is omitted so Kaniko keeps its own default
+// rather than receiving an empty-string flag.
+func buildOptionsArgs(opts omsv1alpha1.BuildOptions) []string {
+	var args []string
+	if opts.SnapshotMode != "" {
+		args = append(args, "--snapshot-mode="+opts.SnapshotMode)
+	}
+	if opts.SingleSnapshot != nil && *opts.SingleSnapshot {
+		args = append(args, "--single-snapshot")
+	}
+	for _, p := range opts.IgnorePaths {
+		if p != "" {
+			args = append(args, "--ignore-path="+p)
+		}
+	}
+	if opts.CacheTTL != "" {
+		args = append(args, "--cache-ttl="+opts.CacheTTL)
+	}
+	return args
 }
 
 // resolveDestination determines the target image for the build.

@@ -88,6 +88,32 @@ kaniko:
     repo: ""
     # Example: registry.luna.ogpu.cloud/patched-images/kaniko-build-cache
 
+  # Chart-wide defaults for Kaniko snapshot / cache tuning. Each field on
+  # an individual ImagePatch's spec.buildOptions overrides the matching
+  # field here; empty here means "let Kaniko keep its own default" (the
+  # controller omits the corresponding flag entirely). Trade-offs are
+  # non-obvious; see ImagePatchSpec.BuildOptions godoc.
+  buildOptions:
+    # Empty | full | redo | time. Empty = Kaniko's own default (full).
+    # redo: typically 5-10x faster than full on large bases (>1GB), at a
+    # small risk of missing changes from unusual write patterns (mount
+    # tricks, cross-overlay hardlinks). Try this before reaching for
+    # `time`, which skips content hashing entirely.
+    snapshotMode: ""
+    # When true, Kaniko takes ONE snapshot at the end instead of after
+    # each RUN. Faster on first build but BREAKS per-RUN build-cache
+    # reuse on subsequent builds. Set per-CR for one-off builds rather
+    # than chart-wide unless you don't care about incremental caching.
+    singleSnapshot: false
+    # Paths to skip during snapshotting (each becomes --ignore-path).
+    # Cuts both snapshot scan time and final image size. Common entries:
+    # /var/cache/apt, /var/lib/apt/lists, /root/.cache/pip, /tmp.
+    # Kaniko already skips /proc /sys /dev /var/run by default.
+    ignorePaths: []
+    # Maximum age for cached build layers (Go duration). Kaniko default
+    # is 336h (14 days). Empty keeps the Kaniko default.
+    cacheTTL: ""
+
   # Resource requirements applied to every Kaniko build container.
   # ephemeral-storage is the critical one: Kaniko extracts the base
   # image into the container rootfs to execute RUN/COPY, so transient
