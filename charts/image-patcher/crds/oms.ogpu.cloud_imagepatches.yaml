@@ -49,8 +49,13 @@ spec:
                   mirror:
                     description: |-
                       Mirror is the apt mirror URL (e.g. http://10.11.32.173/ubuntu).
-                      If set, replaces /etc/apt/sources.list before apt-get update.
-                      The Ubuntu codename is auto-detected from /etc/os-release in the base image.
+                      If set, replaces Ubuntu's apt sources before apt-get update: wipes
+                      both the legacy /etc/apt/sources.list (jammy and earlier) and the
+                      deb822 /etc/apt/sources.list.d/ubuntu.sources (noble and later),
+                      then writes the mirror as legacy `deb` lines. Third-party sources
+                      in /etc/apt/sources.list.d/ (NVIDIA, podman, etc.) are preserved.
+                      The Ubuntu codename is auto-detected from /etc/os-release in the
+                      base image.
                     type: string
                 type: object
               baseImage:

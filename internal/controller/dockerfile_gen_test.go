@@ -23,7 +23,8 @@ func TestDockerfileGenMirror(t *testing.T) {
 
 SHELL ["/bin/sh", "-c"]
 
-RUN . /etc/os-release && echo "deb http://10.11.32.173/ubuntu $VERSION_CODENAME main restricted universe multiverse\n\
+RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources && \
+    . /etc/os-release && echo "deb http://10.11.32.173/ubuntu $VERSION_CODENAME main restricted universe multiverse\n\
 deb http://10.11.32.173/ubuntu $VERSION_CODENAME-updates main restricted universe multiverse\n\
 deb http://10.11.32.173/ubuntu $VERSION_CODENAME-security main restricted universe multiverse\n\
 deb http://10.11.32.173/ubuntu $VERSION_CODENAME-backports main restricted universe multiverse\n\
