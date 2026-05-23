@@ -611,11 +611,23 @@ func GenerateDockerfile(cr *omsv1alpha1.ImagePatch) string {
 		sb.WriteString("\n")
 	}
 
-	// APT - replace sources.list if mirror is configured in the CR
-	// Auto-detects Ubuntu codename from /etc/os-release in the base image
+	// APT - replace Ubuntu's apt sources if a mirror is configured.
+	// Wipes BOTH the legacy /etc/apt/sources.list (jammy and earlier)
+	// AND the deb822 /etc/apt/sources.list.d/ubuntu.sources (noble and
+	// later) before writing the mirror as legacy format. Without the
+	// deb822 wipe, noble's pre-existing ubuntu.sources still points at
+	// archive.ubuntu.com / security.ubuntu.com and apt reads BOTH --
+	// builds fetch from upstream alongside the internal mirror,
+	// defeating the point and adding an external dependency. Legacy
+	// `deb` syntax is parsed by every apt version including noble, so
+	// writing it remains universal. Third-party `.list` / `.sources`
+	// files (NVIDIA, podman, etc.) in sources.list.d/ are intentionally
+	// preserved -- those are usually opt-in from fromImages or the
+	// base image and not what aptConfig.mirror is replacing.
 	if cr.Spec.APT != nil && cr.Spec.APT.Mirror != "" {
 		mirror := cr.Spec.APT.Mirror
-		sb.WriteString(fmt.Sprintf("RUN . /etc/os-release && echo \"deb %s $VERSION_CODENAME main restricted universe multiverse\\n\\\n", mirror))
+		sb.WriteString("RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources && \\\n")
+		sb.WriteString(fmt.Sprintf("    . /etc/os-release && echo \"deb %s $VERSION_CODENAME main restricted universe multiverse\\n\\\n", mirror))
 		for _, suffix := range []string{"-updates", "-security", "-backports"} {
 			sb.WriteString(fmt.Sprintf("deb %s $VERSION_CODENAME%s main restricted universe multiverse\\n\\\n", mirror, suffix))
 		}
