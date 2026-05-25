@@ -152,15 +152,20 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 
 		destination := r.resolveDestination(&imagePatch)
+		buildOpts := mergeBuildOptions(r.DefaultBuildOptions, imagePatch.Spec.BuildOptions)
 
 		// Compute the content-addressed dedup ref: same repo as the
-		// user destination, tag = <user tag>-dedup-<spec hash>. Kaniko
-		// pushes to both destinations in one build; the second tag is
-		// a manifest reference reusing the first's blobs (same repo =
-		// blob scope shared, so no MANIFEST_BLOB_UNKNOWN and no extra
-		// upload).
+		// user destination, tag = dedup-<spec hash>. Kaniko pushes to
+		// both destinations in one build; the second tag is a manifest
+		// reference reusing the first's blobs (same repo = blob scope
+		// shared, so no MANIFEST_BLOB_UNKNOWN and no extra upload).
+		// Gated on both the cluster kill switch (DedupEnabled) and
+		// the per-CR opt-out (DisableBuildCache). Per-CR opt-out
+		// skips BOTH read (short-circuit) and write (second
+		// --destination) so the build is a true bypass that does not
+		// pollute the dedup cache for future identical specs.
 		var specHash, dedupRef string
-		if r.DedupEnabled {
+		if r.DedupEnabled && !boolPtrTrue(buildOpts.DisableBuildCache) {
 			specHash, dedupRef = computeDedupRef(&imagePatch.Spec, destination)
 		}
 
@@ -179,7 +184,6 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			}
 		}
 
-		buildOpts := mergeBuildOptions(r.DefaultBuildOptions, imagePatch.Spec.BuildOptions)
 		j := constructJob(&imagePatch, jobName, cmName, buildNs, destination, r.KanikoImage,
 			r.KanikoPullCachePVC, r.KanikoPullCacheMountPath, r.KanikoBuildCacheRepo,
 			r.KanikoResources, buildOpts, dedupRef)
@@ -482,10 +486,10 @@ func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destin
 		// upload time.
 		args = append(args, "--destination="+dedupDestination)
 	}
-	if pullCachePVC != "" {
+	if pullCachePVC != "" && !boolPtrTrue(buildOpts.DisablePullCache) {
 		args = append(args, "--cache-dir="+pullCacheMountPath)
 	}
-	if buildCacheRepo != "" {
+	if buildCacheRepo != "" && !boolPtrTrue(buildOpts.DisableBuildLayerCache) {
 		args = append(args, "--cache=true", "--cache-repo="+buildCacheRepo)
 	}
 	args = append(args, buildOptionsArgs(buildOpts)...)
@@ -759,6 +763,14 @@ func BuildOptionsFromEnv() omsv1alpha1.BuildOptions {
 	return opts
 }
 
+// boolPtrTrue returns true iff p points at a true value. Used to gate
+// BuildOptions disable-flags whose nil-vs-false distinction matters
+// only at merge time -- once merged, "set and false" and "unset" both
+// mean "feature stays on".
+func boolPtrTrue(p *bool) bool {
+	return p != nil && *p
+}
+
 // mergeBuildOptions returns the effective BuildOptions for a build:
 // CR-supplied fields win, otherwise the chart-wide default applies.
 // Designed to be order-independent and field-granular so a CR can
@@ -780,6 +792,18 @@ func mergeBuildOptions(defaults omsv1alpha1.BuildOptions, override *omsv1alpha1.
 	}
 	if override.CacheTTL != "" {
 		out.CacheTTL = override.CacheTTL
+	}
+	if override.DisableBuildCache != nil {
+		v := *override.DisableBuildCache
+		out.DisableBuildCache = &v
+	}
+	if override.DisableBuildLayerCache != nil {
+		v := *override.DisableBuildLayerCache
+		out.DisableBuildLayerCache = &v
+	}
+	if override.DisablePullCache != nil {
+		v := *override.DisablePullCache
+		out.DisablePullCache = &v
 	}
 	return out
 }
