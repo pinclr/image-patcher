@@ -74,6 +74,39 @@ spec:
                       (Kaniko default: 336h / 2 weeks). Accepts Go duration syntax
                       understood by Kaniko ("24h", "168h"). Maps to --cache-ttl.
                     type: string
+                  disableBuildCache:
+                    description: |-
+                      DisableBuildCache bypasses the controller's content-addressed
+                      dedup short-circuit for this build: skips both the HEAD lookup
+                      (so no manifest retag, Kaniko always runs) AND the second
+                      --destination push of the dedup tag (so this build's output does
+                      NOT populate the cache for future identical specs). Use when you
+                      suspect the spec hash is collision-prone for your case, or when
+                      debugging a poisoned cache entry and need a guaranteed-fresh
+                      build that also avoids re-poisoning. Has no effect when the
+                      cluster-wide kill switch (dedup.enabled=false) is set.
+                    type: boolean
+                  disableBuildLayerCache:
+                    description: |-
+                      DisableBuildLayerCache omits Kaniko's --cache=true / --cache-repo
+                      flags for this build: every RUN step re-executes instead of
+                      pulling a cached layer from the registry build-cache repo. Use
+                      when an upstream apt mirror / pip index / curl source changed
+                      content under a stable URL and you need to invalidate the per-
+                      RUN cache without bumping anything else. Independent of
+                      DisableBuildCache (high-level dedup) and DisablePullCache (local
+                      base-image extract).
+                    type: boolean
+                  disablePullCache:
+                    description: |-
+                      DisablePullCache omits Kaniko's --cache-dir flag for this build:
+                      Kaniko re-pulls the base image from the registry instead of
+                      reusing the local PVC copy. Use when you want to verify the
+                      base ref points at what you expect (mutable tag drift) or to
+                      recover from a corrupted on-disk cache. The PVC stays mounted
+                      either way; only the flag is omitted, so other builds keep
+                      using the cache.
+                    type: boolean
                   ignorePaths:
                     description: |-
                       IgnorePaths tells Kaniko to skip these paths during snapshotting.
