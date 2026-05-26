@@ -17,11 +17,11 @@ metadata:
   labels:
     {{- include "image-patcher.labels" . | nindent 4 }}
 rules:
-  # The canary submits a CR, polls its status, and deletes it when done.
-  # `patch` is needed because the probe annotates the CR each poll tick
-  # to force a fresh reconcile (workaround for the cross-namespace
-  # Owns(&Job) gap). No status subresource verbs -- only the controller
-  # updates status.
+  # The canary submits CRs, polls their status, and deletes them when
+  # done. `patch` is needed because the probe annotates the CR each
+  # poll tick to force a fresh reconcile (workaround for the cross-
+  # namespace Owns(&Job) gap). No status subresource verbs -- only the
+  # controller updates status.
   - apiGroups:
       - oms.ogpu.cloud
     resources:
@@ -33,6 +33,18 @@ rules:
       - create
       - delete
       - patch
+  # Covers the case where config.buildNamespace is empty so Kaniko Jobs
+  # land in the same namespace as the CR. The separate cross-ns Role
+  # below covers the differing-namespace case. The probe reads Job specs
+  # to verify cache-tier disable flags translated to the expected Kaniko
+  # argument shape (e.g. --cache=true absent when disableBuildLayerCache).
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+    verbs:
+      - get
+      - list
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -49,4 +61,38 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "image-patcher.fullname" . }}-healthcheck
     namespace: {{ .Release.Namespace }}
+{{- if and .Values.config.buildNamespace (ne .Values.config.buildNamespace .Release.Namespace) }}
+---
+# Cross-namespace Job read: the controller creates Kaniko Jobs in
+# config.buildNamespace, which can differ from the release ns. Grant
+# the release-ns SA jobs/GET in the build namespace so the probe can
+# inspect Kaniko args.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "image-patcher.fullname" . }}-healthcheck-jobread
+  namespace: {{ .Values.config.buildNamespace }}
+  labels:
+    {{- include "image-patcher.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "image-patcher.fullname" . }}-healthcheck-jobread
+  namespace: {{ .Values.config.buildNamespace }}
+  labels:
+    {{- include "image-patcher.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "image-patcher.fullname" . }}-healthcheck-jobread
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "image-patcher.fullname" . }}-healthcheck
+    namespace: {{ .Release.Namespace }}
+{{- end }}
 {{- end }}

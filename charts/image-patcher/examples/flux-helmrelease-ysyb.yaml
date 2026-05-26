@@ -77,13 +77,6 @@ spec:
       image:
         registry: registry.luna.ogpu.cloud
         repository: image-patch-system/kaniko-executor
-      # Pull cache: PVC mounted as Kaniko's --cache-dir. Caches pulled
-      # base-image layers across ImagePatch builds. The chart creates the
-      # PVC (size below) since we don't set existingClaim.
-      pullCache:
-        enabled: true
-        size: 100Gi
-        # storageClassName: ""   # leave empty for cluster default
       # Build cache: registry repo for Kaniko's intermediate RUN-layer cache.
       # The repo path must already exist (or be auto-created) on the registry.
       buildCache:

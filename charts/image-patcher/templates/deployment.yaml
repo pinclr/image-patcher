@@ -70,12 +70,6 @@ spec:
             {{- end }}
             - name: KANIKO_IMAGE_NAME
               value: {{ include "image-patcher.kanikoImage" . | quote }}
-            {{- if .Values.kaniko.pullCache.enabled }}
-            - name: KANIKO_PULL_CACHE_PVC
-              value: {{ default (printf "%s-kaniko-pull-cache" (include "image-patcher.fullname" .)) .Values.kaniko.pullCache.existingClaim | quote }}
-            - name: KANIKO_PULL_CACHE_MOUNT_PATH
-              value: {{ .Values.kaniko.pullCache.mountPath | quote }}
-            {{- end }}
             {{- if and .Values.kaniko.buildCache.enabled .Values.kaniko.buildCache.repo }}
             - name: KANIKO_BUILD_CACHE_REPO
               value: {{ .Values.kaniko.buildCache.repo | quote }}

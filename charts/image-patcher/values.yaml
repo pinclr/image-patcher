@@ -25,8 +25,7 @@ config:
   defaultImageRegistry: ""
   # buildNamespace: when set, the controller creates the Kaniko build Job and
   # its supporting ConfigMap in this namespace instead of the ImagePatch CR's
-  # own namespace. The chart-managed pull-cache PVC is also placed here so
-  # build pods can mount it. Cross-namespace owner references are not allowed
+  # own namespace. Cross-namespace owner references are not allowed
   # by Kubernetes, so when buildNamespace differs from the CR's namespace the
   # controller omits the OwnerReference and labels the Job / ConfigMap with
   # imagepatch.source.name / imagepatch.source.namespace for traceability —
@@ -44,44 +43,8 @@ kaniko:
     repository: kaniko-project/executor
     tag: v1.23.2
 
-  # Pull cache: PVC mounted into every Kaniko build Job at pullCache.mountPath.
-  # The controller passes --cache-dir=<mountPath> so pulled *base-image*
-  # layers persist across builds. PVC lifecycle is tied to the chart release,
-  # not any individual ImagePatch CR.
-  #
-  # The chart-managed PVC is created as ReadWriteMany so multiple build Jobs
-  # (one per concurrently reconciled ImagePatch CR) can share it across
-  # nodes. storageClassName must therefore reference a class that supports
-  # RWX -- CephFS, NFS, Azure Files, EFS, etc. To bring your own PVC (any
-  # access mode you want), set existingClaim and the chart will skip
-  # creating one.
-  pullCache:
-    enabled: false
-    # If set, the controller mounts this existing PVC (chart skips creating one).
-    existingClaim: ""
-    size: 10Gi
-    storageClassName: ""
-    mountPath: /cache
-    # Cleanup: periodic CronJob that deletes cache files older than
-    # maxAgeDays (by mtime). Kaniko never evicts entries itself, so the
-    # PVC fills up over time. The Job mounts the same PVC, runs in the
-    # same namespace, and only exists when pullCache.enabled is true.
-    cleanup:
-      enabled: false
-      # Cron expression. Default: daily at 03:15 (off-peak).
-      schedule: "15 3 * * *"
-      # Delete cache files whose mtime is older than this many days.
-      maxAgeDays: 30
-      # Any image with /bin/sh + find is fine; busybox is ~5MB.
-      image: busybox:1.36
-      # Forbid: skip the run if a previous one is still cleaning.
-      concurrencyPolicy: Forbid
-      successfulJobsHistoryLimit: 1
-      failedJobsHistoryLimit: 1
-
   # Build cache: container registry where Kaniko caches the result of each
-  # intermediate RUN layer. Independent from pullCache above; both can be
-  # enabled simultaneously. When enabled, the controller passes
+  # intermediate RUN layer. When enabled, the controller passes
   # --cache=true --cache-repo=<repo> to Kaniko. Multi-node safe.
   buildCache:
     enabled: false
@@ -226,44 +189,64 @@ metrics:
     tlsConfig:
       insecureSkipVerify: true
 
-# Healthcheck (canary) CronJob. When enabled, submits a single noop
-# ImagePatch on a schedule and polls its status until terminal. Exercises
-# the full pipeline (base pull, Dockerfile generation, Kaniko build,
-# registry push, RWX pull-cache mount) without depending on external
-# package mirrors. Results surface through the existing controller
-# metrics -- builds_total / build_duration_seconds / failure_reason on
-# CRs whose image label matches the targetImage path.
+# Healthcheck (canary) CronJob. When enabled, walks the matrix of
+# spec.buildOptions disable flags on a schedule and asserts the
+# observable behavior of every cache tier (controller dedup short-
+# circuit and Kaniko build-layer cache). Verifies the full pipeline
+# (base pull, Dockerfile generation, Kaniko build, registry push)
+# plus the cache machinery, without depending on external package
+# mirrors.
 #
-# Successful runs delete their CR immediately; failed runs are retained
-# for failureRetentionSeconds so the build Job + Pod logs can be
-# inspected before the next tick garbage-collects them.
+# Test sequence per tick (sequential):
+#   first      caches on, fresh hash         expect: build runs, no dedup hit
+#   hit        same spec as first            expect: dedup HIT, no Job
+#   nobcache   disableBuildCache             expect: no hit, build runs
+#   nolayer    +disableBuildLayerCache       expect: --cache=true absent in Kaniko args
+#
+# Results surface through controller metrics (builds_total with the
+# image label suffixed by case name) and the per-tick PASS/FAIL summary
+# in the Job log. Successful runs delete their CRs immediately; failed
+# runs are retained for failureRetentionSeconds for debug.
+#
+# Each tick uses a fresh timestamp in the shell RUN so the spec hash
+# is unique per tick (case-1 always builds, case-2 always tests the
+# hit it just wrote). Per-case user tags are stable
+# (<targetImage>-<case>), overwritten each tick, so registry / metric
+# cardinality stays bounded. The hash-derived dedup tag
+# (<repo>:dedup-<hash>) does accumulate one per tick -- set a
+# retention policy on the target repo to cap it.
 healthcheck:
   enabled: false
-  # Default: every 10 minutes. Each run costs one short build slot.
-  schedule: "*/10 * * * *"
+    # Default: hourly. Each tick runs 4 cases sequentially (3 real
+  # builds + 1 short-circuit), heavier than the previous single-case
+  # canary. Lower to "*/10 * * * *" if you want higher-frequency signal
+  # and your registry retention can absorb the extra dedup tag writes.
+  schedule: "0 * * * *"
   # Tiny image with kubectl + /bin/sh. Pinned to a kubectl version
   # within one minor of the cluster API server to be safe. The default
   # uses Rancher's public mirror because the previously-conventional
   # `bitnami/kubectl` tag was retired when Bitnami moved free images
   # to bitnamilegacy/. Override for air-gapped clusters.
   image: rancher/kubectl:v1.31.0
-  # noop test case spec. baseImage is intentionally small and ubiquitous
-  # so the canary doesn't depend on package mirrors. targetImage uses a
-  # stable tag, overwritten each run, so the registry doesn't accumulate
-  # canary artifacts. Leave targetImage empty to fall back to
-  # DEFAULT_IMAGE_REGISTRY-derived naming inside the controller.
+  # baseImage is intentionally small and ubiquitous so the canary
+  # doesn't depend on package mirrors. targetImage is used as a stem;
+  # the probe writes per-case stable tags by appending "-<case>" (e.g.
+  # healthcheck-noop:latest-first / latest-hit / ...), so the same
+  # repo / tag pattern from prior single-case healthcheck still works.
+  # Leave targetImage empty to fall back to DEFAULT_IMAGE_REGISTRY-
+  # derived naming inside the controller.
   baseImage: alpine:3.20
   targetImage: ""
-  # Polling timeout for the submitted CR to reach Succeeded/Failed.
-  # Exceeded -> the probe Job exits with code 2 (TIMEOUT distinct from
-  # build failure code 1).
-  timeoutSeconds: 600
+  # Per-case polling timeout. Exceeded for any single case ->
+  # [FAIL] for that case; the tick continues with subsequent cases
+  # and exits nonzero at the end if any failed.
+  caseTimeoutSeconds: 300
   # Failed canary CRs are kept for this long for debugging, then GC'd
   # by the next tick.
   failureRetentionSeconds: 21600
-  # Upper bound on the probe Job's own runtime, slightly above
-  # timeoutSeconds to allow for startup / cleanup.
-  activeDeadlineSeconds: 900
+  # Upper bound on the probe Job's own runtime, sized for 4 cases each
+  # potentially hitting caseTimeoutSeconds plus startup / cleanup.
+  activeDeadlineSeconds: 1800
 
 # Grafana dashboard provisioning.
 # When enabled, the chart renders a ConfigMap carrying the bundled

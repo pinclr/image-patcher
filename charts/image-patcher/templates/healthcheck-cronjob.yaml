@@ -1,14 +1,32 @@
 {{- if .Values.healthcheck.enabled -}}
-# Healthcheck (canary) CronJob: on schedule, submits a single noop
-# ImagePatch CR and polls its phase until terminal. Verifies the full
-# pipeline -- base image pull, Dockerfile generation, Kaniko build,
-# registry push, RWX pull-cache mount -- without depending on external
-# apt/pypi mirrors. Outcome is visible through the existing controller
-# metrics (image_patcher_builds_total{image=~".*image-patch-healthcheck.*"}).
+# Healthcheck (canary) CronJob: on schedule, walks the matrix of
+# spec.buildOptions disable flags and asserts the observable behavior
+# of every cache tier (controller dedup short-circuit and Kaniko
+# build-layer cache). Verifies the full pipeline -- base image pull,
+# Dockerfile generation, Kaniko build, registry push -- plus the
+# cache machinery, without depending on external apt/pypi mirrors.
+# Outcome is visible through
+# image_patcher_builds_total (one series per case via the image label
+# suffix) and the per-tick PASS/FAIL summary in the Job log.
 #
-# Successes are deleted immediately; failures are retained for
-# .Values.healthcheck.failureRetention so engineers can inspect the
-# build Job / Pod logs before the next run garbage-collects them.
+# Test sequence per tick (sequential, fail-fast counter; tick exits
+# nonzero if any case fails):
+#
+#   first      caches on, fresh hash         expect: build runs, no dedup hit
+#   hit        same spec as first            expect: dedup HIT (DedupHit=true), no Job
+#   nobcache   disableBuildCache             expect: no hit, build runs (gate skips HEAD)
+#   nolayer    +disableBuildLayerCache       expect: build runs, Kaniko args omit --cache=true
+#
+# Each tick uses a fresh timestamp baked into the shell RUN so the
+# spec hash is unique per tick -- no state leaks between ticks. Per-
+# case user tags are stable (<targetImage>-<case>), overwritten each
+# tick, so registry / metric cardinality stays bounded. The hash-
+# derived dedup tag (<repo>:dedup-<hash>) does accumulate one per tick
+# -- set a retention policy on the target repo to cap it.
+#
+# Successful runs delete the CR immediately; failed runs are retained
+# for failureRetentionSeconds so engineers can inspect the build Job /
+# Pod logs before the next run garbage-collects them.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -23,8 +41,6 @@ spec:
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
-      # Each tick is bounded; if anything wedges the script, the Job's
-      # activeDeadline cuts it off and the next tick still gets to run.
       activeDeadlineSeconds: {{ .Values.healthcheck.activeDeadlineSeconds }}
       backoffLimit: 0
       template:
@@ -46,12 +62,14 @@ spec:
               env:
                 - name: NAMESPACE
                   value: {{ .Release.Namespace }}
+                - name: BUILD_NAMESPACE
+                  value: {{ default .Release.Namespace .Values.config.buildNamespace | quote }}
                 - name: BASE_IMAGE
                   value: {{ .Values.healthcheck.baseImage | quote }}
                 - name: TARGET_IMAGE
                   value: {{ .Values.healthcheck.targetImage | quote }}
-                - name: TIMEOUT_SECONDS
-                  value: {{ .Values.healthcheck.timeoutSeconds | quote }}
+                - name: CASE_TIMEOUT_SECONDS
+                  value: {{ .Values.healthcheck.caseTimeoutSeconds | quote }}
                 - name: FAILURE_RETENTION_SECONDS
                   value: {{ .Values.healthcheck.failureRetentionSeconds | quote }}
               command:
@@ -62,11 +80,13 @@ spec:
 
                   CANARY_LABEL="image-patcher.healthcheck/canary=true"
                   TS=$(date +%s)
-                  NAME="healthcheck-noop-${TS}"
+                  PROBE_RUN="echo verify-${TS}"
+                  PASS=0
+                  FAIL=0
 
                   # GC older canary CRs whose age has exceeded the retention
-                  # window. Successful runs already self-delete; this only
-                  # catches failed leftovers and anything we lost track of.
+                  # window. Successful cases self-delete; this catches failed
+                  # leftovers and anything we lost track of.
                   NOW=$(date +%s)
                   CUTOFF=$((NOW - FAILURE_RETENTION_SECONDS))
                   echo "[gc] cutoff=$(date -u -d @${CUTOFF} 2>/dev/null || echo ${CUTOFF})"
@@ -75,68 +95,126 @@ spec:
                       -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.creationTimestamp}{"\n"}{end}' \
                     | while IFS=$(printf '\t') read -r ip_name ip_ts; do
                         [ -z "${ip_name}" ] && continue
-                        # Portable epoch conversion: try GNU date first, fall back
-                        # to busybox date.
-                        ip_epoch=$(date -u -d "${ip_ts}" +%s 2>/dev/null || date -u -D "%Y-%m-%dT%H:%M:%SZ" -d "${ip_ts}" +%s 2>/dev/null || echo 0)
+                        ip_epoch=$(date -u -d "${ip_ts}" +%s 2>/dev/null || echo 0)
                         if [ "${ip_epoch}" -lt "${CUTOFF}" ] && [ "${ip_epoch}" -gt 0 ]; then
                           echo "[gc] deleting stale ${ip_name} (created ${ip_ts})"
                           kubectl delete imagepatch -n "${NAMESPACE}" "${ip_name}" --ignore-not-found
                         fi
                       done
 
-                  # Submit the probe CR. Stable target tag (overwritten each
-                  # run) keeps the registry from accumulating canary artifacts.
-                  echo "[submit] ${NAME} -> ${TARGET_IMAGE}"
-                  cat <<EOF | kubectl apply -f -
-                  apiVersion: oms.ogpu.cloud/v1alpha1
-                  kind: ImagePatch
-                  metadata:
-                    name: ${NAME}
-                    namespace: ${NAMESPACE}
-                    labels:
-                      image-patcher.healthcheck/canary: "true"
-                      image-patcher.healthcheck/case: noop
-                  spec:
-                    baseImage: ${BASE_IMAGE}
-                    targetImage: ${TARGET_IMAGE}
-                    shell:
-                      - name: noop
-                        run: "true"
-                  EOF
+                  # run_case CASE_NAME OPTS_YAML EXPECT_DEDUP_HIT EXPECT_JOB ABSENT_ARG
+                  #   OPTS_YAML  full buildOptions block (with leading
+                  #              "  buildOptions:" line) or "" to omit.
+                  #   EXPECT_*   "true" / "false"
+                  #   ABSENT_ARG substring that must NOT appear in Kaniko
+                  #              args (e.g. "--cache=true"), or "" to skip.
+                  # Failures are counted; the function does not abort the
+                  # script so every case is reported per tick.
+                  run_case() {
+                    case_name=$1
+                    opts_yaml=$2
+                    expect_hit=$3
+                    expect_job=$4
+                    absent_arg=$5
 
-                  # Poll until terminal phase or timeout.
-                  #
-                  # Cross-namespace caveat: when config.buildNamespace differs
-                  # from the CR's namespace, the controller's Owns(&Job{}) watch
-                  # cannot reach the Job, so it won't observe terminal Job
-                  # transitions on its own. As a workaround, annotate the CR
-                  # each tick to force a fresh reconcile. Track a follow-up to
-                  # fix this controller-side (RequeueAfter on Running phase).
-                  DEADLINE=$((NOW + TIMEOUT_SECONDS))
-                  PHASE=""
-                  while [ "$(date +%s)" -lt "${DEADLINE}" ]; do
-                    PHASE=$(kubectl get imagepatch -n "${NAMESPACE}" "${NAME}" \
-                              -o jsonpath='{.status.phase}' 2>/dev/null || true)
-                    case "${PHASE}" in
-                      Succeeded)
-                        echo "[ok] ${NAME} succeeded"
-                        kubectl delete imagepatch -n "${NAMESPACE}" "${NAME}" --ignore-not-found
-                        exit 0
-                        ;;
-                      Failed)
-                        echo "[fail] ${NAME} failed -- retaining for ${FAILURE_RETENTION_SECONDS}s for debug"
-                        kubectl get imagepatch -n "${NAMESPACE}" "${NAME}" -o yaml | sed 's/^/  /'
-                        exit 1
-                        ;;
-                    esac
-                    kubectl annotate imagepatch -n "${NAMESPACE}" "${NAME}" \
-                      image-patcher.healthcheck/probe-poll="$(date +%s)" \
-                      --overwrite >/dev/null 2>&1 || true
-                    sleep 10
-                  done
+                    cr_name="healthcheck-${case_name}-${TS}"
+                    target="${TARGET_IMAGE}-${case_name}"
 
-                  echo "[timeout] ${NAME} did not reach a terminal phase within ${TIMEOUT_SECONDS}s (last seen: ${PHASE:-<unset>})"
-                  exit 2
+                    echo "===== case-${case_name}: applying ${cr_name} -> ${target} ====="
+                    {
+                      printf '%s\n' "apiVersion: oms.ogpu.cloud/v1alpha1"
+                      printf '%s\n' "kind: ImagePatch"
+                      printf '%s\n' "metadata:"
+                      printf '  name: %s\n' "${cr_name}"
+                      printf '  namespace: %s\n' "${NAMESPACE}"
+                      printf '%s\n' "  labels:"
+                      printf '%s\n' "    image-patcher.healthcheck/canary: \"true\""
+                      printf '    image-patcher.healthcheck/case: %s\n' "${case_name}"
+                      printf '%s\n' "spec:"
+                      printf '  baseImage: %s\n' "${BASE_IMAGE}"
+                      printf '  targetImage: %s\n' "${target}"
+                      printf '%s\n' "  shell:"
+                      printf '%s\n' "    - name: probe"
+                      printf '      run: \"%s\"\n' "${PROBE_RUN}"
+                      [ -n "${opts_yaml}" ] && printf '%s\n' "${opts_yaml}"
+                    } | kubectl apply -f - >/dev/null
+
+                    # Poll until terminal phase or timeout. Annotate every
+                    # tick to nudge a reconcile -- workaround for the
+                    # cross-namespace Owns(&Job{}) gap; same trick the old
+                    # single-case probe used.
+                    deadline=$(($(date +%s) + CASE_TIMEOUT_SECONDS))
+                    phase=""
+                    while [ "$(date +%s)" -lt "${deadline}" ]; do
+                      phase=$(kubectl get imagepatch -n "${NAMESPACE}" "${cr_name}" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+                      case "${phase}" in
+                        Succeeded|Failed) break;;
+                      esac
+                      kubectl annotate imagepatch -n "${NAMESPACE}" "${cr_name}" \
+                        image-patcher.healthcheck/probe-poll="$(date +%s)" \
+                        --overwrite >/dev/null 2>&1 || true
+                      sleep 5
+                    done
+
+                    if [ "${phase}" != "Succeeded" ]; then
+                      echo "[FAIL] case-${case_name}: phase=${phase:-<timeout>}; retaining CR for debug"
+                      FAIL=$((FAIL+1))
+                      return
+                    fi
+
+                    actual_hit=$(kubectl get imagepatch -n "${NAMESPACE}" "${cr_name}" -o jsonpath='{.status.dedupHit}' 2>/dev/null || true)
+                    actual_job=$(kubectl get imagepatch -n "${NAMESPACE}" "${cr_name}" -o jsonpath='{.status.jobName}' 2>/dev/null || true)
+                    # jsonpath emits "" for unset / false; normalize.
+                    [ -z "${actual_hit}" ] && actual_hit=false
+
+                    fail_msg=""
+                    if [ "${actual_hit}" != "${expect_hit}" ]; then
+                      fail_msg="${fail_msg} dedupHit=${actual_hit} (want ${expect_hit});"
+                    fi
+                    if [ "${expect_job}" = "true" ] && [ -z "${actual_job}" ]; then
+                      fail_msg="${fail_msg} expected Job but JobName empty;"
+                    fi
+                    if [ "${expect_job}" = "false" ] && [ -n "${actual_job}" ]; then
+                      fail_msg="${fail_msg} expected no Job but JobName=${actual_job};"
+                    fi
+                    if [ -n "${actual_job}" ] && [ -n "${absent_arg}" ]; then
+                      args=$(kubectl get job -n "${BUILD_NAMESPACE}" "${actual_job}" \
+                              -o jsonpath='{.spec.template.spec.containers[0].args}' 2>/dev/null || echo "")
+                      case "${args}" in
+                        *"${absent_arg}"*)
+                          fail_msg="${fail_msg} Kaniko args contain forbidden ${absent_arg};"
+                          echo "        args: ${args}"
+                          ;;
+                      esac
+                    fi
+
+                    if [ -n "${fail_msg}" ]; then
+                      echo "[FAIL] case-${case_name}:${fail_msg} retaining for debug"
+                      FAIL=$((FAIL+1))
+                      return
+                    fi
+
+                    echo "[PASS] case-${case_name}: dedupHit=${actual_hit} jobName=${actual_job:-<empty>}"
+                    PASS=$((PASS+1))
+                    kubectl delete imagepatch -n "${NAMESPACE}" "${cr_name}" --ignore-not-found >/dev/null
+                  }
+
+                  # Indentation inside the opts blocks matters: 2-space under
+                  # spec:, 4-space under buildOptions:.
+                  NO_OPTS=""
+                  OPTS_NOBCACHE='  buildOptions:
+                      disableBuildCache: true'
+                  OPTS_NOLAYER='  buildOptions:
+                      disableBuildCache: true
+                      disableBuildLayerCache: true'
+
+                  run_case first    "${NO_OPTS}"       false true  ""
+                  run_case hit      "${NO_OPTS}"       true  false ""
+                  run_case nobcache "${OPTS_NOBCACHE}" false true  ""
+                  run_case nolayer  "${OPTS_NOLAYER}"  false true  "--cache=true"
+
+                  echo "===== summary: PASS=${PASS} FAIL=${FAIL} ====="
+                  [ "${FAIL}" -eq 0 ] || exit 1
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
