@@ -214,11 +214,6 @@ func main() {
 		kanikoImage = "gcr.io/kaniko-project/executor:v1.23.2"
 	}
 
-	pullCacheMountPath := os.Getenv("KANIKO_PULL_CACHE_MOUNT_PATH")
-	if pullCacheMountPath == "" {
-		pullCacheMountPath = "/cache"
-	}
-
 	dedupEnabled := os.Getenv("DEDUP_ENABLED") != "false"
 	registryClient := dedupRegistryClient(dedupEnabled, setupLog)
 
@@ -241,8 +236,6 @@ func main() {
 		Scheme:                   mgr.GetScheme(),
 		DefaultRegistry:          os.Getenv("DEFAULT_IMAGE_REGISTRY"),
 		KanikoImage:              kanikoImage,
-		KanikoPullCachePVC:       os.Getenv("KANIKO_PULL_CACHE_PVC"),
-		KanikoPullCacheMountPath: pullCacheMountPath,
 		KanikoBuildCacheRepo:     os.Getenv("KANIKO_BUILD_CACHE_REPO"),
 		BuildNamespace:           os.Getenv("BUILD_NAMESPACE"),
 		DefaultBuildOptions:      controller.BuildOptionsFromEnv(),

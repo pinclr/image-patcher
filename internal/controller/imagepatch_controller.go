@@ -65,18 +65,9 @@ type ImagePatchReconciler struct {
 	// for traceability. Cleanup on CR deletion becomes the user's
 	// responsibility in that mode.
 	BuildNamespace string
-	// KanikoPullCachePVC, when set, is the name of a PVC (in the same
-	// namespace as the ImagePatch) the controller mounts into every Kaniko
-	// build Job at KanikoPullCacheMountPath. Kaniko is then invoked with
-	// --cache-dir=<mountPath> so pulled base-image layers persist across
-	// builds. The PVC is managed by the chart (or pre-provisioned by an
-	// admin) — its lifecycle is independent of any single ImagePatch.
-	KanikoPullCachePVC       string
-	KanikoPullCacheMountPath string
 	// KanikoBuildCacheRepo, when set, is passed to Kaniko as --cache-repo
 	// for the build/layer cache (intermediate RUN steps cached in a
-	// container registry). Independent from the local pull cache PVC above;
-	// both can be enabled at once.
+	// container registry).
 	KanikoBuildCacheRepo string
 	// DefaultBuildOptions are chart-wide defaults for Kaniko snapshot /
 	// cache tuning. Each field on the CR's spec.buildOptions overrides
@@ -185,8 +176,7 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 
 		j := constructJob(&imagePatch, jobName, cmName, buildNs, destination, r.KanikoImage,
-			r.KanikoPullCachePVC, r.KanikoPullCacheMountPath, r.KanikoBuildCacheRepo,
-			r.KanikoResources, buildOpts, dedupRef)
+			r.KanikoBuildCacheRepo, r.KanikoResources, buildOpts, dedupRef)
 		// Owner references must live in the same namespace as the dependent
 		// (Kubernetes GC rejects cross-namespace ownership). When the build
 		// namespace matches the CR's namespace, set the controller reference
@@ -469,7 +459,7 @@ func (r *ImagePatchReconciler) createOrUpdateConfigMap(ctx context.Context, imag
 	return nil
 }
 
-func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destination, kanikoImage, pullCachePVC, pullCacheMountPath, buildCacheRepo string, resources corev1.ResourceRequirements, buildOpts omsv1alpha1.BuildOptions, dedupDestination string) *batchv1.Job {
+func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destination, kanikoImage, buildCacheRepo string, resources corev1.ResourceRequirements, buildOpts omsv1alpha1.BuildOptions, dedupDestination string) *batchv1.Job {
 
 	backoffLimit := int32(0)
 	secretDefaultMode := int32(0664)
@@ -485,9 +475,6 @@ func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destin
 		// reference. Lets dedup observe future builds without doubling
 		// upload time.
 		args = append(args, "--destination="+dedupDestination)
-	}
-	if pullCachePVC != "" && !boolPtrTrue(buildOpts.DisablePullCache) {
-		args = append(args, "--cache-dir="+pullCacheMountPath)
 	}
 	if buildCacheRepo != "" && !boolPtrTrue(buildOpts.DisableBuildLayerCache) {
 		args = append(args, "--cache=true", "--cache-repo="+buildCacheRepo)
@@ -524,21 +511,6 @@ func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destin
 			},
 		},
 	}
-	if pullCachePVC != "" {
-		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name:      "kaniko-pull-cache",
-			MountPath: pullCacheMountPath,
-		})
-		volumes = append(volumes, corev1.Volume{
-			Name: "kaniko-pull-cache",
-			VolumeSource: corev1.VolumeSource{
-				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: pullCachePVC,
-				},
-			},
-		})
-	}
-
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      jobName,
@@ -800,10 +772,6 @@ func mergeBuildOptions(defaults omsv1alpha1.BuildOptions, override *omsv1alpha1.
 	if override.DisableBuildLayerCache != nil {
 		v := *override.DisableBuildLayerCache
 		out.DisableBuildLayerCache = &v
-	}
-	if override.DisablePullCache != nil {
-		v := *override.DisablePullCache
-		out.DisablePullCache = &v
 	}
 	return out
 }

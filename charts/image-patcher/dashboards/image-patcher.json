@@ -309,113 +309,10 @@
     },
     {
       "type": "row",
-      "id": 103,
-      "title": "Pull-cache PVC",
-      "collapsed": false,
-      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 27},
-      "panels": []
-    },
-    {
-      "type": "gauge",
-      "id": 10,
-      "title": "Pull-cache usage",
-      "description": "kubelet_volume_stats_used_bytes / capacity. Requires kubelet PVC stats in Prometheus.",
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 28},
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
-          "min": 0,
-          "max": 1,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {"color": "green", "value": null},
-              {"color": "yellow", "value": 0.7},
-              {"color": "red", "value": 0.9}
-            ]
-          }
-        }
-      },
-      "options": {
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "${datasource}"},
-          "expr": "max(kubelet_volume_stats_used_bytes{persistentvolumeclaim=~\".*kaniko-pull-cache\"}) / max(kubelet_volume_stats_capacity_bytes{persistentvolumeclaim=~\".*kaniko-pull-cache\"})"
-        }
-      ]
-    },
-    {
-      "type": "timeseries",
-      "id": 11,
-      "title": "Pull-cache used / capacity",
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 28},
-      "fieldConfig": {
-        "defaults": {"unit": "bytes", "custom": {"drawStyle": "line", "fillOpacity": 10}}
-      },
-      "options": {
-        "legend": {"showLegend": true, "displayMode": "list", "placement": "bottom"}
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "${datasource}"},
-          "expr": "max(kubelet_volume_stats_used_bytes{persistentvolumeclaim=~\".*kaniko-pull-cache\"})",
-          "legendFormat": "used"
-        },
-        {
-          "refId": "B",
-          "datasource": {"type": "prometheus", "uid": "${datasource}"},
-          "expr": "max(kubelet_volume_stats_capacity_bytes{persistentvolumeclaim=~\".*kaniko-pull-cache\"})",
-          "legendFormat": "capacity"
-        }
-      ]
-    },
-    {
-      "type": "stat",
-      "id": 12,
-      "title": "Predicted days until full",
-      "description": "Linear extrapolation of the last 6h of available bytes. Negative or empty = trend is downward (filling) or no data.",
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 28},
-      "fieldConfig": {
-        "defaults": {
-          "unit": "d",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {"color": "red", "value": null},
-              {"color": "orange", "value": 3},
-              {"color": "green", "value": 14}
-            ]
-          }
-        }
-      },
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "${datasource}"},
-          "expr": "max(kubelet_volume_stats_available_bytes{persistentvolumeclaim=~\".*kaniko-pull-cache\"}) / clamp_min(max(deriv(kubelet_volume_stats_used_bytes{persistentvolumeclaim=~\".*kaniko-pull-cache\"}[6h])), 1) / 86400"
-        }
-      ]
-    },
-    {
-      "type": "row",
       "id": 104,
       "title": "In flight & failure breakdown",
       "collapsed": false,
-      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 36},
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 27},
       "panels": []
     },
     {
@@ -424,7 +321,7 @@
       "title": "Active builds",
       "description": "ImagePatch CRs currently in Phase=Running. Refreshed every 30s by the in-process phase aggregator.",
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 37},
+      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 28},
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -458,7 +355,7 @@
       "title": "ImagePatches by phase",
       "description": "Snapshot of all ImagePatch CRs grouped by Status.Phase.",
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 8, "w": 10, "x": 6, "y": 37},
+      "gridPos": {"h": 8, "w": 10, "x": 6, "y": 28},
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -494,7 +391,7 @@
       "title": "Build failures by reason",
       "description": "Failed builds split by jobFailureReason: deadline_exceeded / backoff_limit_exceeded / build_error.",
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 37},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 28},
       "fieldConfig": {
         "defaults": {
           "unit": "cpm",

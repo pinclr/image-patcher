@@ -19,28 +19,9 @@ kaniko:
     repository: image-patch-system/kaniko-executor
     # tag defaults to v1.23.2
 
-  # Pull cache (base-image layers): chart-managed PVC mounted into every
-  # build Job as Kaniko's --cache-dir. RWX is required so concurrent build
-  # Jobs across different nodes can share the same cache -- we back it with
-  # CephFS. Lives in config.buildNamespace alongside the Jobs.
-  pullCache:
-    enabled: true
-    storageClassName: ceph-filesystem
-    size: 100Gi
-    mountPath: /cache
-    # Nightly CronJob prunes cache files older than 30 days so the RWX PVC
-    # doesn't fill up (Kaniko itself never evicts). The default busybox
-    # image lives on docker.io which is unreachable from this cluster's
-    # build pods -- reuse the mirrored kubectl image (alpine-based, has
-    # find/sh) instead.
-    cleanup:
-      enabled: true
-      image: registry.luna.ogpu.cloud/image-patch-system/kubectl:1.31
-
   # Build cache (intermediate RUN layers): pushed/pulled from a container
   # registry via --cache=true --cache-repo=<repo>. Multi-node safe by
-  # construction (registry handles concurrency). Independent of pullCache;
-  # both are enabled together here.
+  # construction (registry handles concurrency).
   buildCache:
     enabled: true
     repo: registry.luna.ogpu.cloud/patched-images/kaniko-build-cache
@@ -77,9 +58,9 @@ dedup:
 
 config:
   defaultImageRegistry: registry.luna.ogpu.cloud/patched-images
-  # All Kaniko build Jobs (and the chart-managed pull-cache PVC) land in
-  # `oms`, regardless of which namespace the ImagePatch CR itself lives in.
-  # See values.yaml for the cross-namespace owner-reference caveats.
+  # All Kaniko build Jobs land in `oms`, regardless of which namespace
+  # the ImagePatch CR itself lives in. See values.yaml for the cross-
+  # namespace owner-reference caveats.
   buildNamespace: oms
 
 # This cluster runs kube-prometheus-stack in the `monitoring` namespace

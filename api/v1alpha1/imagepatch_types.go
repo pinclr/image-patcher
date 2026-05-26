@@ -128,20 +128,9 @@ type BuildOptions struct {
 	// when an upstream apt mirror / pip index / curl source changed
 	// content under a stable URL and you need to invalidate the per-
 	// RUN cache without bumping anything else. Independent of
-	// DisableBuildCache (high-level dedup) and DisablePullCache (local
-	// base-image extract).
+	// DisableBuildCache (high-level dedup).
 	// +optional
 	DisableBuildLayerCache *bool `json:"disableBuildLayerCache,omitempty"`
-
-	// DisablePullCache omits Kaniko's --cache-dir flag for this build:
-	// Kaniko re-pulls the base image from the registry instead of
-	// reusing the local PVC copy. Use when you want to verify the
-	// base ref points at what you expect (mutable tag drift) or to
-	// recover from a corrupted on-disk cache. The PVC stays mounted
-	// either way; only the flag is omitted, so other builds keep
-	// using the cache.
-	// +optional
-	DisablePullCache *bool `json:"disablePullCache,omitempty"`
 }
 
 // FromImage declares a multi-stage build source. The image is pulled

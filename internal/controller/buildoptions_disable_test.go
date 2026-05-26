@@ -21,33 +21,20 @@ import (
 
 // kanikoArgs returns the args slice the generated Kaniko container
 // would be invoked with, for assertion convenience.
-func kanikoArgs(buildOpts omsv1alpha1.BuildOptions, pullCachePVC, buildCacheRepo, dedupRef string) []string {
+func kanikoArgs(buildOpts omsv1alpha1.BuildOptions, buildCacheRepo, dedupRef string) []string {
 	cr := &omsv1alpha1.ImagePatch{}
 	cr.Name = "tc"
 	cr.Namespace = "ns"
 	j := constructJob(cr, "tc-job", "tc-cm", "ns", "registry.local/app:v1", "kaniko:test",
-		pullCachePVC, "/cache", buildCacheRepo,
+		buildCacheRepo,
 		corev1.ResourceRequirements{}, buildOpts, dedupRef)
 	return j.Spec.Template.Spec.Containers[0].Args
 }
 
-func TestDisablePullCache_OmitsCacheDir(t *testing.T) {
-	on := true
-	withFlag := kanikoArgs(omsv1alpha1.BuildOptions{DisablePullCache: &on}, "the-pvc", "", "")
-	withoutFlag := kanikoArgs(omsv1alpha1.BuildOptions{}, "the-pvc", "", "")
-
-	if hasArgPrefix(withFlag, "--cache-dir=") {
-		t.Errorf("DisablePullCache=true: --cache-dir should be omitted; got args: %v", withFlag)
-	}
-	if !hasArgPrefix(withoutFlag, "--cache-dir=") {
-		t.Errorf("DisablePullCache unset: --cache-dir should be present; got args: %v", withoutFlag)
-	}
-}
-
 func TestDisableBuildLayerCache_OmitsCacheFlags(t *testing.T) {
 	on := true
-	withFlag := kanikoArgs(omsv1alpha1.BuildOptions{DisableBuildLayerCache: &on}, "", "registry.local/cache", "")
-	withoutFlag := kanikoArgs(omsv1alpha1.BuildOptions{}, "", "registry.local/cache", "")
+	withFlag := kanikoArgs(omsv1alpha1.BuildOptions{DisableBuildLayerCache: &on}, "registry.local/cache", "")
+	withoutFlag := kanikoArgs(omsv1alpha1.BuildOptions{}, "registry.local/cache", "")
 
 	for _, a := range withFlag {
 		if a == "--cache=true" || strings.HasPrefix(a, "--cache-repo=") {
@@ -65,7 +52,7 @@ func TestDisableBuildCache_DropsDedupDestination(t *testing.T) {
 	// dedupDestination when the flag is set. This test pins the
 	// constructJob side: empty dedupRef means no second --destination,
 	// matching the contract Reconcile relies on.
-	args := kanikoArgs(omsv1alpha1.BuildOptions{}, "", "", "")
+	args := kanikoArgs(omsv1alpha1.BuildOptions{}, "", "")
 	destCount := 0
 	for _, a := range args {
 		if strings.HasPrefix(a, "--destination=") {
