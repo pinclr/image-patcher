@@ -9,7 +9,7 @@ on:
 jobs:
   go-test:
     name: go test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, imagepatcher, build]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -22,7 +22,7 @@ jobs:
 
   golangci:
     name: golangci-lint
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, imagepatcher, build]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -35,7 +35,7 @@ jobs:
 
   helm:
     name: helm chart
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, imagepatcher, build]
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
@@ -60,18 +60,20 @@ jobs:
           fi
 
       - name: install kubeconform
+        # Job-scoped dir on the self-hosted runner -- no sudo required, and
+        # cleaned automatically between runs by GHA. ${{ runner.temp }} is
+        # always writable for the runner user.
         run: |
-          curl -sSL -o kubeconform.tar.gz \
+          curl -sSL -o "${{ runner.temp }}/kubeconform.tar.gz" \
             https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
-          tar -xzf kubeconform.tar.gz kubeconform
-          sudo mv kubeconform /usr/local/bin/
+          tar -xzf "${{ runner.temp }}/kubeconform.tar.gz" -C "${{ runner.temp }}" kubeconform
 
       - name: kubeconform validate rendered manifests
-        run: kubeconform -strict -ignore-missing-schemas -summary /tmp/rendered.yaml
+        run: "${{ runner.temp }}/kubeconform" -strict -ignore-missing-schemas -summary /tmp/rendered.yaml
 
   crd-drift:
     name: CRD drift
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, imagepatcher, build]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
