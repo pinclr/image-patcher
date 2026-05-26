@@ -284,7 +284,7 @@ func (r *ImagePatchReconciler) handleExistingJob(ctx context.Context, imagePatch
 			return ctrl.Result{}, err
 		}
 		if phaseChanged {
-			recordTerminalBuild(newPhase, imagePatch.Status.Image, job)
+			recordTerminalBuild(imagePatch, newPhase, imagePatch.Status.Image, job)
 		}
 		l.Info("Updated ImagePatch status", "phase", newPhase, "message", message)
 	}
@@ -338,7 +338,9 @@ func (r *ImagePatchReconciler) tryDedupShortCircuit(ctx context.Context, cr *oms
 		l.Error(err, "dedup hit: status update failed; will retry", "dedupRef", dedupRef)
 		return false, err
 	}
-	metrics.RecordBuildResult(metrics.ResultSucceeded, destination, metrics.FailureReasonNone, true, time.Time{}, time.Time{})
+	metrics.RecordBuildResult(metrics.ResultSucceeded, destination, metrics.FailureReasonNone,
+		true /*dedupHit*/, buildLayerCacheDisabled(cr),
+		cr.CreationTimestamp.Time, time.Time{} /*no Job*/, time.Time{})
 	l.Info("dedup hit: skipped build", "imagepatch", cr.Name, "dedupRef", dedupRef, "destination", destination, "specHash", specHash)
 	return true, nil
 }
@@ -347,7 +349,7 @@ func (r *ImagePatchReconciler) tryDedupShortCircuit(ctx context.Context, cr *oms
 // Called only after the status update has succeeded, so a failed Status.Update
 // followed by a retry does not double-count. Non-terminal phases (Running) are
 // ignored.
-func recordTerminalBuild(newPhase, targetImage string, job *batchv1.Job) {
+func recordTerminalBuild(cr *omsv1alpha1.ImagePatch, newPhase, targetImage string, job *batchv1.Job) {
 	var result, failureReason string
 	switch newPhase {
 	case "Succeeded":
@@ -367,7 +369,21 @@ func recordTerminalBuild(newPhase, targetImage string, job *batchv1.Job) {
 	if job.Status.CompletionTime != nil {
 		end = job.Status.CompletionTime.Time
 	}
-	metrics.RecordBuildResult(result, targetImage, failureReason, false, start, end)
+	metrics.RecordBuildResult(result, targetImage, failureReason,
+		false /*dedupHit*/, buildLayerCacheDisabled(cr),
+		cr.CreationTimestamp.Time, start, end)
+}
+
+// buildLayerCacheDisabled reports whether the CR opted out of Kaniko's
+// RUN-layer cache. Pulled into a helper so both the dedup-hit and the
+// Job-driven metric callsites resolve it the same way -- read the CR's
+// spec.buildOptions.disableBuildLayerCache. Chart-level defaults are
+// intentionally ignored: this label tracks per-CR intent, not the
+// effective Kaniko args (which the chart can also gate via
+// kaniko.buildCache.enabled). For "did this build actually use the
+// layer cache" use a Kaniko-side metric, not this label.
+func buildLayerCacheDisabled(cr *omsv1alpha1.ImagePatch) bool {
+	return cr.Spec.BuildOptions != nil && boolPtrTrue(cr.Spec.BuildOptions.DisableBuildLayerCache)
 }
 
 // jobFailureReason classifies a failed build into one of the bounded

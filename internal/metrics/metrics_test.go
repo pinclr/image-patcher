@@ -48,54 +48,93 @@ func TestSplitImageRef(t *testing.T) {
 func TestRecordBuildResult_IncrementsCounter(t *testing.T) {
 	buildsTotal.Reset()
 	buildDurationSeconds.Reset()
+	e2eSeconds.Reset()
 
-	start := time.Now().Add(-90 * time.Second)
-	end := start.Add(90 * time.Second)
-	RecordBuildResult(ResultSucceeded, "registry.example.com/app:v1", FailureReasonNone, false, start, end)
+	crCreated := time.Now().Add(-2 * time.Minute)
+	jobStart := time.Now().Add(-90 * time.Second)
+	end := jobStart.Add(90 * time.Second)
+	RecordBuildResult(ResultSucceeded, "registry.example.com/app:v1", FailureReasonNone,
+		false /*dedupHit*/, false /*layerCacheDisabled*/,
+		crCreated, jobStart, end)
 
 	got := testutil.ToFloat64(buildsTotal.WithLabelValues(
-		ResultSucceeded, "registry.example.com", "app:v1", FailureReasonNone, "false",
+		ResultSucceeded, "registry.example.com", "app:v1", FailureReasonNone, "false", "false",
 	))
 	if got != 1 {
-		t.Errorf("builds_total{result=succeeded,registry=registry.example.com,image=app:v1,failure_reason=none,dedup_hit=false} = %v, want 1", got)
+		t.Errorf("builds_total{result=succeeded,...,dedup_hit=false,build_layer_cache_disabled=false} = %v, want 1", got)
 	}
 
 	if n := testutil.CollectAndCount(buildDurationSeconds); n != 1 {
 		t.Errorf("build_duration_seconds series count = %d, want 1", n)
 	}
+	if n := testutil.CollectAndCount(e2eSeconds); n != 1 {
+		t.Errorf("e2e_seconds series count = %d, want 1", n)
+	}
 }
 
-func TestRecordBuildResult_SkipsHistogramOnZeroStart(t *testing.T) {
+func TestRecordBuildResult_SkipsBuildDurationOnZeroJobStart(t *testing.T) {
 	buildsTotal.Reset()
 	buildDurationSeconds.Reset()
+	e2eSeconds.Reset()
 
-	RecordBuildResult(ResultFailed, "registry.example.com/app:v1", FailureReasonBuild, false, time.Time{}, time.Now())
+	crCreated := time.Now().Add(-30 * time.Second)
+	RecordBuildResult(ResultFailed, "registry.example.com/app:v1", FailureReasonBuild,
+		false, false,
+		crCreated, time.Time{}, time.Now())
 
 	got := testutil.ToFloat64(buildsTotal.WithLabelValues(
-		ResultFailed, "registry.example.com", "app:v1", FailureReasonBuild, "false",
+		ResultFailed, "registry.example.com", "app:v1", FailureReasonBuild, "false", "false",
 	))
 	if got != 1 {
-		t.Errorf("builds_total counter not incremented when StartTime is zero: got %v", got)
+		t.Errorf("builds_total counter not incremented when jobStart is zero: got %v", got)
 	}
 	if n := testutil.CollectAndCount(buildDurationSeconds); n != 0 {
-		t.Errorf("build_duration_seconds observed despite zero StartTime: series count = %d", n)
+		t.Errorf("build_duration_seconds observed despite zero jobStart: series count = %d", n)
+	}
+	// e2e is independent of jobStart.
+	if n := testutil.CollectAndCount(e2eSeconds); n != 1 {
+		t.Errorf("e2e_seconds should be recorded even when jobStart is zero; series count = %d", n)
 	}
 }
 
-func TestRecordBuildResult_DedupHitSkipsHistogram(t *testing.T) {
+func TestRecordBuildResult_DedupHitSkipsBuildDurationButRecordsE2E(t *testing.T) {
 	buildsTotal.Reset()
 	buildDurationSeconds.Reset()
+	e2eSeconds.Reset()
 
-	RecordBuildResult(ResultSucceeded, "registry.example.com/app:v1", FailureReasonNone, true, time.Now().Add(-time.Minute), time.Now())
+	crCreated := time.Now().Add(-3 * time.Second)
+	RecordBuildResult(ResultSucceeded, "registry.example.com/app:v1", FailureReasonNone,
+		true /*dedupHit*/, false,
+		crCreated, time.Time{}, time.Now())
 
 	got := testutil.ToFloat64(buildsTotal.WithLabelValues(
-		ResultSucceeded, "registry.example.com", "app:v1", FailureReasonNone, "true",
+		ResultSucceeded, "registry.example.com", "app:v1", FailureReasonNone, "true", "false",
 	))
 	if got != 1 {
 		t.Errorf("builds_total{dedup_hit=true} = %v, want 1", got)
 	}
 	if n := testutil.CollectAndCount(buildDurationSeconds); n != 0 {
 		t.Errorf("build_duration_seconds observed on dedup hit: series count = %d, want 0", n)
+	}
+	if n := testutil.CollectAndCount(e2eSeconds); n != 1 {
+		t.Errorf("e2e_seconds should be recorded on dedup hit (fast path); series count = %d, want 1", n)
+	}
+}
+
+func TestRecordBuildResult_LayerCacheDisabledLabel(t *testing.T) {
+	buildsTotal.Reset()
+	buildDurationSeconds.Reset()
+
+	jobStart := time.Now().Add(-30 * time.Second)
+	RecordBuildResult(ResultSucceeded, "registry.example.com/app:v1", FailureReasonNone,
+		false, true /*layerCacheDisabled*/,
+		jobStart.Add(-time.Second), jobStart, time.Now())
+
+	got := testutil.ToFloat64(buildsTotal.WithLabelValues(
+		ResultSucceeded, "registry.example.com", "app:v1", FailureReasonNone, "false", "true",
+	))
+	if got != 1 {
+		t.Errorf("builds_total{build_layer_cache_disabled=true} = %v, want 1", got)
 	}
 }
 

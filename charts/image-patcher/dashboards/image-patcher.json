@@ -309,10 +309,76 @@
     },
     {
       "type": "row",
+      "id": 105,
+      "title": "End-to-end latency",
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 27},
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 14,
+      "title": "E2E percentiles (CR creation -> terminal)",
+      "description": "image_patcher_e2e_seconds: wall time from ImagePatch creationTimestamp to terminal phase. Includes reconciler queue, Job scheduling, Kaniko, push, status update. Always recorded -- dedup hits land in the smallest bucket.",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 28},
+      "fieldConfig": {
+        "defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10}}
+      },
+      "options": {
+        "legend": {"showLegend": true, "displayMode": "table", "calcs": ["lastNotNull", "max"]},
+        "tooltip": {"mode": "multi"}
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(image_patcher_e2e_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(image_patcher_e2e_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p95"
+        },
+        {
+          "refId": "C",
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(image_patcher_e2e_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 15,
+      "title": "E2E p95 split by cache state",
+      "description": "p95 of image_patcher_e2e_seconds, split by dedup_hit (controller short-circuit) and build_layer_cache_disabled (per-CR opt out of Kaniko --cache=true). Compare curves to see which cache tier moves end-to-end time.",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 28},
+      "fieldConfig": {
+        "defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10}}
+      },
+      "options": {
+        "legend": {"showLegend": true, "displayMode": "table", "calcs": ["lastNotNull", "max"]},
+        "tooltip": {"mode": "multi"}
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "expr": "histogram_quantile(0.95, sum by (le, dedup_hit, build_layer_cache_disabled) (rate(image_patcher_e2e_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "dedup_hit={{dedup_hit}} layer_disabled={{build_layer_cache_disabled}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
       "id": 104,
       "title": "In flight & failure breakdown",
       "collapsed": false,
-      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 27},
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 36},
       "panels": []
     },
     {
@@ -321,7 +387,7 @@
       "title": "Active builds",
       "description": "ImagePatch CRs currently in Phase=Running. Refreshed every 30s by the in-process phase aggregator.",
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 28},
+      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 37},
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -355,7 +421,7 @@
       "title": "ImagePatches by phase",
       "description": "Snapshot of all ImagePatch CRs grouped by Status.Phase.",
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 8, "w": 10, "x": 6, "y": 28},
+      "gridPos": {"h": 8, "w": 10, "x": 6, "y": 37},
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -391,7 +457,7 @@
       "title": "Build failures by reason",
       "description": "Failed builds split by jobFailureReason: deadline_exceeded / backoff_limit_exceeded / build_error.",
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 28},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 37},
       "fieldConfig": {
         "defaults": {
           "unit": "cpm",
