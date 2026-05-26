@@ -135,7 +135,14 @@ spec:
                       printf '  targetImage: %s\n' "${target}"
                       printf '%s\n' "  shell:"
                       printf '%s\n' "    - name: probe"
-                      printf '      run: \"%s\"\n' "${PROBE_RUN}"
+                      # YAML-quote with literal double quotes. printf's single-
+                      # quoted format string makes `\"` a literal backslash+quote
+                      # (printf doesn't recognize \" as an escape), which would
+                      # bake the backslashes into the CR's shell.run -- Dockerfile
+                      # then emits `RUN \"echo ...\"`, sh tries to exec `"echo`
+                      # and fails with "echo: not found". Use bare quotes in the
+                      # format string instead.
+                      printf '      run: "%s"\n' "${PROBE_RUN}"
                       [ -n "${opts_yaml}" ] && printf '%s\n' "${opts_yaml}"
                     } | kubectl apply -f - >/dev/null
 
