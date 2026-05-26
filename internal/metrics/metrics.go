@@ -71,19 +71,29 @@ var (
 		prometheus.CounterOpts{
 			Namespace: namespace,
 			Name:      "builds_total",
-			Help:      "Image builds that reached a terminal state, by result, target image, failure reason (none for successes), and whether the build was short-circuited via content-addressed dedup (dedup_hit=true means no Kaniko Job ran).",
+			Help:      "Image builds that reached a terminal state, by result, target image, failure reason (none for successes), whether the build was short-circuited via content-addressed dedup (dedup_hit=true means no Kaniko Job ran), and whether the CR opted out of Kaniko's RUN-layer cache via spec.buildOptions.disableBuildLayerCache.",
 		},
-		[]string{"result", "registry", "image", "failure_reason", "dedup_hit"},
+		[]string{"result", "registry", "image", "failure_reason", "dedup_hit", "build_layer_cache_disabled"},
 	)
 
 	buildDurationSeconds = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: namespace,
 			Name:      "build_duration_seconds",
-			Help:      "Wall time from Kaniko Job startTime to the terminal transition observed by the reconciler.",
+			Help:      "Wall time from Kaniko Job startTime to the terminal transition observed by the reconciler. Excludes reconciler queue + Pod scheduling time; for the full CR-creation-to-terminal duration use image_patcher_e2e_seconds.",
 			Buckets:   buildDurationBuckets,
 		},
-		[]string{"result", "registry", "image"},
+		[]string{"result", "registry", "image", "build_layer_cache_disabled"},
+	)
+
+	e2eSeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "e2e_seconds",
+			Help:      "Wall time from ImagePatch CR creation timestamp to the terminal transition observed by the reconciler. Includes reconciler queue wait, ConfigMap+Job creation, Pod scheduling, Kaniko build, push, and Status.Update. Always observed -- including dedup hits, which typically land in the smallest bucket (registry HEAD+PUT only).",
+			Buckets:   buildDurationBuckets,
+		},
+		[]string{"result", "registry", "image", "dedup_hit", "build_layer_cache_disabled"},
 	)
 
 	reconcileFailuresTotal = prometheus.NewCounterVec(
@@ -117,6 +127,7 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(
 		buildsTotal,
 		buildDurationSeconds,
+		e2eSeconds,
 		reconcileFailuresTotal,
 		activeBuilds,
 		imagePatches,
@@ -127,40 +138,59 @@ func init() {
 // invoke this on the *transition* into a terminal phase (the reconciler's
 // existing "phase changed" guard), so requeues never double-count.
 //
+// Three timestamps drive different histograms:
+//
+//   - crCreated  -> endTime  : observed on e2e_seconds. Always; covers
+//     reconciler queue, ConfigMap+Job creation, Pod scheduling, Kaniko,
+//     push, and status update. Dedup hits typically land in the smallest
+//     bucket (registry HEAD+PUT only -- no Job).
+//
+//   - jobStarted -> endTime  : observed on build_duration_seconds. Only
+//     when a Kaniko Job actually ran (dedupHit=false AND jobStarted not
+//     zero). Pure Kaniko wall time.
+//
 // failureReason is a bounded enum (FailureReason* constants); pass
-// FailureReasonNone for successes. The duration histogram does not carry
-// the failure_reason label since it would inflate cardinality without much
-// query value.
-//
-// dedupHit=true marks builds that were short-circuited by the controller's
-// content-addressed dedup path: no Kaniko Job ran, the existing manifest
-// was retagged. These are always result=Succeeded and have no meaningful
-// duration to histogram (registry RTT only), so the histogram is skipped.
-//
-// If startTime is zero (the kubelet has not stamped Job.Status.StartTime
-// yet), the duration observation is skipped to avoid recording a misleading
-// near-zero value; the counter still increments.
-func RecordBuildResult(result, targetImage, failureReason string, dedupHit bool, startTime, endTime time.Time) {
+// FailureReasonNone for successes. dedupHit / buildLayerCacheDisabled
+// become labels so dashboards can split per cache state.
+func RecordBuildResult(result, targetImage, failureReason string, dedupHit, buildLayerCacheDisabled bool, crCreated, jobStarted, endTime time.Time) {
 	registry, image := SplitImageRef(targetImage)
+	dedupHitLabel := strconv.FormatBool(dedupHit)
+	bldLayerLabel := strconv.FormatBool(buildLayerCacheDisabled)
+
 	buildsTotal.With(prometheus.Labels{
-		"result":         result,
-		"registry":       registry,
-		"image":          image,
-		"failure_reason": failureReason,
-		"dedup_hit":      strconv.FormatBool(dedupHit),
+		"result":                     result,
+		"registry":                   registry,
+		"image":                      image,
+		"failure_reason":             failureReason,
+		"dedup_hit":                  dedupHitLabel,
+		"build_layer_cache_disabled": bldLayerLabel,
 	}).Inc()
 
-	if dedupHit || startTime.IsZero() {
-		return
-	}
 	if endTime.IsZero() {
 		endTime = time.Now()
 	}
-	buildDurationSeconds.With(prometheus.Labels{
-		"result":   result,
-		"registry": registry,
-		"image":    image,
-	}).Observe(endTime.Sub(startTime).Seconds())
+
+	if !crCreated.IsZero() {
+		e2eSeconds.With(prometheus.Labels{
+			"result":                     result,
+			"registry":                   registry,
+			"image":                      image,
+			"dedup_hit":                  dedupHitLabel,
+			"build_layer_cache_disabled": bldLayerLabel,
+		}).Observe(endTime.Sub(crCreated).Seconds())
+	}
+
+	// Kaniko wall time only when a Job actually ran. Skip on dedup hit
+	// (no Job) and when the kubelet hasn't stamped startTime yet (early
+	// terminal observation; rare).
+	if !dedupHit && !jobStarted.IsZero() {
+		buildDurationSeconds.With(prometheus.Labels{
+			"result":                     result,
+			"registry":                   registry,
+			"image":                      image,
+			"build_layer_cache_disabled": bldLayerLabel,
+		}).Observe(endTime.Sub(jobStarted).Seconds())
+	}
 }
 
 // RecordReconcileFailure increments the reconciler failure counter for a
