@@ -69,7 +69,7 @@ jobs:
           tar -xzf "${{ runner.temp }}/kubeconform.tar.gz" -C "${{ runner.temp }}" kubeconform
 
       - name: kubeconform validate rendered manifests
-        run: "${{ runner.temp }}/kubeconform" -strict -ignore-missing-schemas -summary /tmp/rendered.yaml
+        run: '${{ runner.temp }}/kubeconform -strict -ignore-missing-schemas -summary /tmp/rendered.yaml'
 
   crd-drift:
     name: CRD drift
