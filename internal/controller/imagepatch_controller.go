@@ -662,8 +662,12 @@ func GenerateDockerfile(cr *omsv1alpha1.ImagePatch) string {
 	// base image and not what aptConfig.mirror is replacing.
 	if cr.Spec.APT != nil && cr.Spec.APT.Mirror != "" {
 		mirror := cr.Spec.APT.Mirror
+		// printf, not echo: /bin/sh is dash and POSIX echo writes `\n`
+		// literally, which collapses sources.list into one line and makes
+		// apt parse junk components like `multiverse\ndeb`. printf always
+		// interprets `\n`.
 		sb.WriteString("RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources && \\\n")
-		sb.WriteString(fmt.Sprintf("    . /etc/os-release && echo \"deb %s $VERSION_CODENAME main restricted universe multiverse\\n\\\n", mirror))
+		sb.WriteString(fmt.Sprintf("    . /etc/os-release && printf \"deb %s $VERSION_CODENAME main restricted universe multiverse\\n\\\n", mirror))
 		for _, suffix := range []string{"-updates", "-security", "-backports"} {
 			sb.WriteString(fmt.Sprintf("deb %s $VERSION_CODENAME%s main restricted universe multiverse\\n\\\n", mirror, suffix))
 		}
