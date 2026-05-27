@@ -19,14 +19,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Inlined instead of `make docker-build docker-push` because the
-      # self-hosted runner image (label set: [self-hosted, imagepatcher,
-      # build]) ships with podman + uidmap but not GNU make, and the build
-      # step is the only Makefile target CD invokes -- not worth pulling
-      # in make just for two podman commands. If the Makefile recipe for
-      # docker-build/docker-push or the IMG derivation changes, mirror
-      # it here (Makefile :125-134 and the IMG := line at the top).
+      # TODO(MSP-46): image build skipped pending runner-image update.
+      #
+      # The current runner pod sets no_new_privs, which blocks both `sudo`
+      # (so we cannot apt-install build tooling at workflow time) and
+      # newuidmap (so rootless podman cannot set up its user namespace).
+      # Once the runner image is rebuilt with make + podman + uidmap baked
+      # in, /etc/subuid + /etc/subgid pre-populated for the runner user,
+      # and the pod spec relaxed (drop no_new_privs / loosen seccomp),
+      # re-enable the steps below by flipping `if: false` to `if: true` or
+      # removing the guard entirely.
       - name: build and push controller image
+        if: false
         env:
           IMAGE_REGISTRY: ${{ secrets.IMAGE_REGISTRY }}
         run: |
@@ -34,22 +38,9 @@ jobs:
             echo "::error::IMAGE_REGISTRY repo secret is not set"
             exit 1
           fi
-          # Mirrors the Makefile's CONTAINER_TOOL ?= docker knob: we keep
-          # the name in one place so swapping back to docker (or to
-          # buildah, etc.) is a single-line edit. The previous `make ...
-          # CONTAINER_TOOL=podman` invocation made this explicit; staying
-          # explicit here too prevents the choice from drifting silently.
-          container_tool=podman
-          app_version=$(awk '/^appVersion:/ {gsub(/"/, "", $2); print $2}' charts/image-patcher/Chart.yaml)
-          if [ -z "$app_version" ]; then
-            echo "::error::could not read appVersion from charts/image-patcher/Chart.yaml"
-            exit 1
-          fi
-          img="${IMAGE_REGISTRY%/}/image-patch-system/image-patch-operator:${app_version}"
-          echo "building $img with $container_tool"
-          "$container_tool" build --platform linux/amd64 -t "$img" .
-          echo "pushing $img"
-          "$container_tool" push "$img"
+          make docker-build docker-push \
+            IMAGE_REGISTRY="$IMAGE_REGISTRY" \
+            CONTAINER_TOOL=podman
 
       - uses: azure/setup-helm@v4
         with:
