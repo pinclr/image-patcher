@@ -150,6 +150,40 @@ unauthorized: authentication required`,
 			log:  `some package emitted imageosnotsupported: probably a warning`,
 			want: FailureLabelControllerInternalError,
 		},
+		{
+			// Real kaniko log captured against a from-scratch base
+			// (registry.luna.ogpu.cloud/luna/test-scratch:latest).
+			// The scratch image has no /bin/sh, so the FIRST RUN
+			// kaniko tries -- image-patcher's APT mirror rewrite,
+			// emitted before any user-defined shell step -- fails
+			// before oms-controller's check-os guard ever runs. The
+			// sentinel string is therefore absent and we fall back
+			// to matching kaniko's fork/exec error verbatim.
+			name: "kaniko fork/exec on scratch base (real log)",
+			log: `INFO[0000] RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources && . /etc/os-release && echo "deb http://mirror ..." > /etc/apt/sources.list
+INFO[0000] Cmd: /bin/sh
+INFO[0000] Args: [-c rm -f /etc/apt/sources.list ...]
+INFO[0000] Running: [/bin/sh -c rm -f /etc/apt/sources.list ...]
+error building image: error building stage: failed to execute command: starting command: fork/exec /bin/sh: no such file or directory`,
+			want: FailureLabelImageOSNotSupported,
+		},
+		{
+			// If anyone pins SHELL to bash and the base still lacks
+			// it (or has /bin/sh but not /bin/bash), the same family
+			// of error fires with /bin/bash. Same bucket.
+			name: "kaniko fork/exec on missing bash",
+			log:  `error building image: ... fork/exec /bin/bash: no such file or directory`,
+			want: FailureLabelImageOSNotSupported,
+		},
+		{
+			// Runtime-layer form. Today kaniko exec'es directly via
+			// Go, so this string doesn't fire from real kaniko logs;
+			// kept as a forward-compat match in case the runner ever
+			// delegates to runc / containerd, which use this wording.
+			name: "runc-style executable not found",
+			log:  `OCI runtime create failed: ... executable file not found in $PATH: unknown`,
+			want: FailureLabelImageOSNotSupported,
+		},
 
 		// --- ControllerInternalError: no usable signal -> contact-support bucket ---
 		{

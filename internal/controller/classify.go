@@ -174,23 +174,33 @@ func classifyBuildFailure(ctx context.Context, kube kubernetes.Interface, job *b
 // split out so the keyword matrix can be unit-tested without an API
 // server. Order matters:
 //
-//  1. ImageOSNotSupported first, matched case-sensitively against the
-//     sentinel string we emit ourselves from the prepended check-os
+//  1. ImageOSNotSupported, sentinel-marker form: matched case-sensitively
+//     against the string we emit ourselves from the prepended check-os
 //     shell step. Highest priority because the marker is unambiguous
 //     and pre-empts any incidental keyword hit later in the log.
-//  2. InvalidImage -- union of "auth required at the registry" and
+//  2. ImageOSNotSupported, shell-missing form: kaniko's `fork/exec
+//     /bin/sh: no such file or directory` (and variants). Folded into
+//     the same label because the user-facing remediation is identical
+//     to (1) -- "feed us a base image with a working shell" -- and
+//     because for scratch / distroless bases the failure beats our
+//     prepended check-os to the punch (kaniko emits this from the
+//     FIRST `RUN` it tries to execute, which is image-patcher's APT
+//     mirror rewrite, BEFORE any user-defined shell step). Without
+//     this rule those bases would land in ControllerInternalError
+//     and look like our fault.
+//  3. InvalidImage -- union of "auth required at the registry" and
 //     "image doesn't exist at the registry". Both share keywords that
 //     registries often interchange (Harbor returns 404 for unauthorized
 //     requests to avoid info-leak), and the actionable advice is the
 //     same on either branch.
-//  3. NetworkError -- DNS / TCP / proxy failures. Kept distinct because
+//  4. NetworkError -- DNS / TCP / proxy failures. Kept distinct because
 //     these are operator-side (proxy / mirror config) and the user has
 //     no lever to pull. Order-wise: a rare Kaniko proxy 407 would
 //     contain "unauthorized" and get mis-classed as InvalidImage --
 //     acceptable, since in our environment 407 is essentially never
 //     seen and the surrounding signal is usually clear enough that the
 //     operator can still triage from the logs.
-//  4. Everything else -> ControllerInternalError.
+//  5. Everything else -> ControllerInternalError.
 func classifyLogTail(logTail string) string {
 	// Case-sensitive: marker is controller-owned, never user-supplied;
 	// pre-empts every later rule so an unsupported-OS build doesn't get
@@ -201,6 +211,22 @@ func classifyLogTail(logTail string) string {
 	}
 
 	low := strings.ToLower(logTail)
+
+	// Shell-missing form. Goes before InvalidImage so it isn't shadowed
+	// by an incidental "unauthorized" elsewhere in the tail. The Go
+	// fork/exec wording is what kaniko emits directly; the "executable
+	// file not found in $PATH" wording comes from runc / containerd
+	// runtimes and is included for forward compatibility in case kaniko
+	// ever delegates RUN execution there.
+	for _, kw := range []string{
+		"fork/exec /bin/sh: no such file or directory",
+		"fork/exec /bin/bash: no such file or directory",
+		`executable file not found in $path`,
+	} {
+		if strings.Contains(low, kw) {
+			return FailureLabelImageOSNotSupported
+		}
+	}
 
 	// InvalidImage: registry returned either an auth challenge or a
 	// not-found for the requested repo/tag. We treat these as one bucket

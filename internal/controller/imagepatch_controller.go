@@ -557,6 +557,40 @@ func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destin
 	}
 }
 
+// imageOSCheckCommand is emitted as the VERY FIRST RUN in every generated
+// Dockerfile so a non-Ubuntu (or unsupported-Ubuntu) base fails with a
+// classifiable signal instead of producing a downstream "VERSION_CODENAME
+// is empty" / "apt-get not found" error that the log classifier can't pin
+// on the user.
+//
+// Single-line shell on purpose: the run line goes straight into a
+// Dockerfile `RUN`, so an embedded newline would either need backslash
+// continuation (verbose) or break case/esac. Same workaround as
+// oms-controller's check-os step in complicatedPatchSpec.
+//
+// The marker "ImageOSNotSupported:" is what classify.go's marker rule
+// matches case-sensitively; exit 42 is cosmetic (the marker carries
+// classification) but distinctive enough to spot in `kubectl describe
+// pod` while triaging.
+//
+// Supported Ubuntu set: 20.04 / 22.04 / 24.04 / 26.04. Mirrors
+// oms-controller's `complicatedPatchSpec` -- if either side widens the
+// set, mirror the other.
+//
+// image-patcher is fully Ubuntu-coupled today (APT block uses apt-get
+// and $VERSION_CODENAME from /etc/os-release), so emitting this check
+// unconditionally doesn't reduce capability -- it just surfaces an
+// assumption that was already baked in.
+const imageOSCheckCommand = `[ -r /etc/os-release ] || ` +
+	`{ echo "ImageOSNotSupported: /etc/os-release missing or unreadable" >&2; exit 42; }; ` +
+	`. /etc/os-release; ` +
+	`[ "$ID" = "ubuntu" ] || ` +
+	`{ echo "ImageOSNotSupported: id=${ID:-unknown} pretty=${PRETTY_NAME:-unknown}" >&2; exit 42; }; ` +
+	`case "$VERSION_ID" in ` +
+	`20.04|22.04|24.04|26.04) ;; ` +
+	`*) echo "ImageOSNotSupported: ubuntu_version=${VERSION_ID:-unknown}" >&2; exit 42 ;; ` +
+	`esac`
+
 // GenerateDockerfile generates a Dockerfile from the ImagePatch CR spec.
 // GenerateDockerfile generates a Dockerfile from the ImagePatch CR spec.
 func GenerateDockerfile(cr *omsv1alpha1.ImagePatch) string {
@@ -575,6 +609,16 @@ func GenerateDockerfile(cr *omsv1alpha1.ImagePatch) string {
 	// base image set SHELL to something kaniko can't resolve via PATH (e.g.
 	// ["sh", "-lc"] on a minimal image without /bin in PATH).
 	sb.WriteString("SHELL [\"/bin/sh\", \"-c\"]\n\n")
+
+	// Image-OS guard. Must be the first RUN -- before APT mirror,
+	// COPY --from, or any user-defined shell step -- so that
+	// non-Ubuntu / unsupported-Ubuntu bases fail with the
+	// "ImageOSNotSupported:" marker rather than producing a downstream
+	// "VERSION_CODENAME is empty" / "apt-get not found" error the
+	// log classifier can't pin on the user. See imageOSCheckCommand
+	// above for the supported-version contract and case-sensitivity
+	// rationale.
+	sb.WriteString("RUN " + imageOSCheckCommand + "\n\n")
 
 	// COPY --from - pull files from the multi-stage sources declared at
 	// the top of the file. Emitted immediately after the base FROM so the
