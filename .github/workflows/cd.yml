@@ -19,6 +19,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Inlined instead of `make docker-build docker-push` because the
+      # self-hosted runner image (label set: [self-hosted, imagepatcher,
+      # build]) ships with podman + uidmap but not GNU make, and the build
+      # step is the only Makefile target CD invokes -- not worth pulling
+      # in make just for two podman commands. If the Makefile recipe for
+      # docker-build/docker-push or the IMG derivation changes, mirror
+      # it here (Makefile :125-134 and the IMG := line at the top).
       - name: build and push controller image
         env:
           IMAGE_REGISTRY: ${{ secrets.IMAGE_REGISTRY }}
@@ -27,9 +34,22 @@ jobs:
             echo "::error::IMAGE_REGISTRY repo secret is not set"
             exit 1
           fi
-          make docker-build docker-push \
-            IMAGE_REGISTRY="$IMAGE_REGISTRY" \
-            CONTAINER_TOOL=podman
+          # Mirrors the Makefile's CONTAINER_TOOL ?= docker knob: we keep
+          # the name in one place so swapping back to docker (or to
+          # buildah, etc.) is a single-line edit. The previous `make ...
+          # CONTAINER_TOOL=podman` invocation made this explicit; staying
+          # explicit here too prevents the choice from drifting silently.
+          container_tool=podman
+          app_version=$(awk '/^appVersion:/ {gsub(/"/, "", $2); print $2}' charts/image-patcher/Chart.yaml)
+          if [ -z "$app_version" ]; then
+            echo "::error::could not read appVersion from charts/image-patcher/Chart.yaml"
+            exit 1
+          fi
+          img="${IMAGE_REGISTRY%/}/image-patch-system/image-patch-operator:${app_version}"
+          echo "building $img with $container_tool"
+          "$container_tool" build --platform linux/amd64 -t "$img" .
+          echo "pushing $img"
+          "$container_tool" push "$img"
 
       - uses: azure/setup-helm@v4
         with:
