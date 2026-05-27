@@ -185,20 +185,17 @@ error building image: error building stage: failed to execute command: starting 
 			want: FailureLabelImageOSNotSupported,
 		},
 		{
-			// If anyone pins SHELL to bash and the base still lacks
-			// it (or has /bin/sh but not /bin/bash), the same family
-			// of error fires with /bin/bash. Same bucket.
-			name: "kaniko fork/exec on missing bash",
-			log:  `error building image: ... fork/exec /bin/bash: no such file or directory`,
-			want: FailureLabelImageOSNotSupported,
-		},
-		{
-			// Runtime-layer form. Today kaniko exec'es directly via
-			// Go, so this string doesn't fire from real kaniko logs;
-			// kept as a forward-compat match in case the runner ever
-			// delegates to runc / containerd, which use this wording.
-			name: "runc-style executable not found",
-			log:  `OCI runtime create failed: ... executable file not found in $PATH: unknown`,
+			// Real kaniko log captured against a base whose /bin/sh is
+			// the wrong CPU architecture for the runner (e.g. arm64
+			// binary on an amd64 node). kaniko's INFO Running line
+			// shows /bin/sh -c ... but execve fails with EXEC_FORMAT,
+			// surfacing as "fork/exec /bin/sh: exec format error". Same
+			// bucket as scratch / no-shell -- the user fed us an
+			// unpatchable base, regardless of *why* /bin/sh can't run.
+			name: "kaniko fork/exec on arch-mismatched /bin/sh (real log)",
+			log: `INFO[0000] Args: [-c [ -r /etc/os-release ] || exit 42; . /etc/os-release; [ "$ID" = "ubuntu" ] || exit 42; case "$VERSION_ID" in 20.04|22.04|24.04|26.04) ;; *) exit 42 ;; esac]
+INFO[0000] Running: [/bin/sh -c [ -r /etc/os-release ] || exit 42; . /etc/os-release; [ "$ID" = "ubuntu" ] || exit 42; case "$VERSION_ID" in 20.04|22.04|24.04|26.04) ;; *) exit 42 ;; esac]
+error building image: error building stage: failed to execute command: starting command: fork/exec /bin/sh: exec format error`,
 			want: FailureLabelImageOSNotSupported,
 		},
 

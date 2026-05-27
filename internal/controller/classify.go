@@ -224,20 +224,24 @@ func classifyLogTail(logTail string) string {
 
 	low := strings.ToLower(logTail)
 
-	// Shell-missing form. Goes before InvalidImage so it isn't shadowed
-	// by an incidental "unauthorized" elsewhere in the tail. The Go
-	// fork/exec wording is what kaniko emits directly; the "executable
-	// file not found in $PATH" wording comes from runc / containerd
-	// runtimes and is included for forward compatibility in case kaniko
-	// ever delegates RUN execution there.
-	for _, kw := range []string{
-		"fork/exec /bin/sh: no such file or directory",
-		"fork/exec /bin/bash: no such file or directory",
-		`executable file not found in $path`,
-	} {
-		if strings.Contains(low, kw) {
-			return FailureLabelImageOSNotSupported
-		}
+	// Shell-unrunnable form. GenerateDockerfile pins SHELL to /bin/sh
+	// (see imagepatch_controller.go), so every kaniko RUN goes through
+	// /bin/sh -- if execve on /bin/sh fails for any reason the build is
+	// dead. Anchored on kaniko's full "starting command" error prefix
+	// rather than a bare `fork/exec /bin/sh:` substring: the longer
+	// form is the structural wording kaniko uses on its exec-failure
+	// path (vs. `waiting for process to exit:` for runtime exits), so
+	// the match is harder to false-trigger on incidental log content
+	// while still covering every trailing reason:
+	//
+	//   "...fork/exec /bin/sh: no such file or directory"  -- scratch / distroless
+	//   "...fork/exec /bin/sh: exec format error"          -- wrong arch
+	//   "...fork/exec /bin/sh: <future kaniko wording>"    -- defensive coverage
+	//
+	// Goes before InvalidImage so it isn't shadowed by an incidental
+	// "unauthorized" elsewhere in the tail.
+	if strings.Contains(low, "failed to execute command: starting command: fork/exec /bin/sh:") {
+		return FailureLabelImageOSNotSupported
 	}
 
 	// InvalidImage: registry returned either an auth challenge or a
