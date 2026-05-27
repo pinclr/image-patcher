@@ -19,18 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # TODO(MSP-46): image build skipped pending runner-image update.
-      #
-      # The current runner pod sets no_new_privs, which blocks both `sudo`
-      # (so we cannot apt-install build tooling at workflow time) and
-      # newuidmap (so rootless podman cannot set up its user namespace).
-      # Once the runner image is rebuilt with make + podman + uidmap baked
-      # in, /etc/subuid + /etc/subgid pre-populated for the runner user,
-      # and the pod spec relaxed (drop no_new_privs / loosen seccomp),
-      # re-enable the steps below by flipping `if: false` to `if: true` or
-      # removing the guard entirely.
       - name: build and push controller image
-        if: false
         env:
           IMAGE_REGISTRY: ${{ secrets.IMAGE_REGISTRY }}
         run: |
