@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"io"
+	"regexp"
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -54,17 +55,27 @@ const (
 	FailureLabelControllerInternalError = "ControllerInternalError"
 )
 
-// imageOSNotSupportedMarker is the sentinel string our caller (oms-controller)
-// emits from the check-os shell step it prepends to every patch build. The
-// step exits non-zero with this prefix on stderr when the base image's
-// /etc/os-release reports a non-Ubuntu distro or a Ubuntu version outside
-// the supported set, giving us a precise classification that the generic
-// "apt-get failed" / "exit 1" tail couldn't.
+// imageOSExitMarker matches the kaniko terminal-error line emitted when
+// the check-os RUN (see imageOSCheckCommand in imagepatch_controller.go)
+// exits with our reserved sentinel code 42.
 //
-// Matched case-sensitively (unlike the keyword sets below): the string is
-// one we own, never user-supplied, so we avoid accidentally hitting a
-// lowercase "imageosnotsupported" in some upstream package's log line.
-const imageOSNotSupportedMarker = "ImageOSNotSupported:"
+// We match on kaniko's structural emission rather than any string the
+// guard itself prints. kaniko echoes every RUN's command body verbatim
+// into FOUR INFO log lines (`No cached layer found for cmd RUN ...`,
+// `RUN ...`, `Args: [-c ...]`, `Running: [/bin/sh -c ...]`), so any
+// echo arg in the guard would show up in EVERY build's logs and
+// false-trigger the classifier even when check-os silently passed.
+// `waiting for process to exit: exit status 42` is written by kaniko's
+// own error path on RUN failure with that exit code, not from the
+// command body, so the same INFO-echo trap doesn't apply.
+//
+// 42 is reserved for image-patcher's check-os guard. apt-get returns
+// 100, curl 6/7/28, go binaries 0/1/2 -- 42 is essentially unused by
+// the toolchain we run during a patch build, so an `exit status 42`
+// line in the log can only have come from the guard.
+//
+// `\b` boundaries prevent matching "exit status 420" / "4242".
+var imageOSExitMarker = regexp.MustCompile(`waiting for process to exit: exit status 42\b`)
 
 // IsKnownFailureLabel reports whether s is one of the FailureLabel*
 // constants -- i.e. a message produced by a previous run of
@@ -174,20 +185,19 @@ func classifyBuildFailure(ctx context.Context, kube kubernetes.Interface, job *b
 // split out so the keyword matrix can be unit-tested without an API
 // server. Order matters:
 //
-//  1. ImageOSNotSupported, sentinel-marker form: matched case-sensitively
-//     against the string we emit ourselves from the prepended check-os
-//     shell step. Highest priority because the marker is unambiguous
-//     and pre-empts any incidental keyword hit later in the log.
+//  1. ImageOSNotSupported, exit-42 form: kaniko's structural
+//     `waiting for process to exit: exit status 42` line, which only
+//     fires when our check-os guard's `exit 42` lands. Highest priority
+//     because 42 is reserved for this guard and the line is emitted by
+//     kaniko (not by our RUN body), so it can't false-trigger from
+//     kaniko's own RUN-body INFO echoes the way a printed marker would.
 //  2. ImageOSNotSupported, shell-missing form: kaniko's `fork/exec
 //     /bin/sh: no such file or directory` (and variants). Folded into
 //     the same label because the user-facing remediation is identical
 //     to (1) -- "feed us a base image with a working shell" -- and
 //     because for scratch / distroless bases the failure beats our
-//     prepended check-os to the punch (kaniko emits this from the
-//     FIRST `RUN` it tries to execute, which is image-patcher's APT
-//     mirror rewrite, BEFORE any user-defined shell step). Without
-//     this rule those bases would land in ControllerInternalError
-//     and look like our fault.
+//     prepended check-os to the punch: there's no /bin/sh, kaniko
+//     can't start the guard RUN at all, so we never see exit 42.
 //  3. InvalidImage -- union of "auth required at the registry" and
 //     "image doesn't exist at the registry". Both share keywords that
 //     registries often interchange (Harbor returns 404 for unauthorized
@@ -202,11 +212,13 @@ func classifyBuildFailure(ctx context.Context, kube kubernetes.Interface, job *b
 //     operator can still triage from the logs.
 //  5. Everything else -> ControllerInternalError.
 func classifyLogTail(logTail string) string {
-	// Case-sensitive: marker is controller-owned, never user-supplied;
-	// pre-empts every later rule so an unsupported-OS build doesn't get
-	// downgraded into "network error" by an incidental apt-mirror DNS
-	// failure that happened earlier in the same log tail.
-	if strings.Contains(logTail, imageOSNotSupportedMarker) {
+	// Structural exit-code match (see imageOSExitMarker for why we
+	// match the kaniko terminal line rather than a substring of the
+	// guard's command body). Pre-empts every later rule so an
+	// unsupported-OS build doesn't get downgraded into "network error"
+	// by an incidental apt-mirror DNS failure that happened earlier
+	// in the same log tail.
+	if imageOSExitMarker.MatchString(logTail) {
 		return FailureLabelImageOSNotSupported
 	}
 

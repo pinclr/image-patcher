@@ -563,32 +563,36 @@ func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destin
 // is empty" / "apt-get not found" error that the log classifier can't pin
 // on the user.
 //
+// Signal is the exit code 42 (not a printed marker): kaniko echoes every
+// RUN's command body verbatim into INFO log lines (`No cached layer
+// found for cmd RUN ...`, `RUN ...`, `Args: [-c ...]`, `Running:
+// [/bin/sh -c ...]`), so anything we echo here would also appear in
+// every successful build's logs and false-trigger the classifier.
+// Instead the guard exits 42 silently, and classify.go matches the
+// `waiting for process to exit: exit status 42` line that kaniko itself
+// emits on RUN failure -- structural emission, not a substring of the
+// command body. Trade-off: `kubectl logs <build-pod>` no longer shows
+// which branch fired (ID vs. VERSION_ID, with the offending value);
+// the user-facing label is just "ImageOSNotSupported" and the operator
+// can re-check the base image's /etc/os-release manually.
+//
 // Single-line shell on purpose: the run line goes straight into a
 // Dockerfile `RUN`, so an embedded newline would either need backslash
-// continuation (verbose) or break case/esac. Same workaround as
-// oms-controller's check-os step in complicatedPatchSpec.
+// continuation (verbose) or break case/esac.
 //
-// The marker "ImageOSNotSupported:" is what classify.go's marker rule
-// matches case-sensitively; exit 42 is cosmetic (the marker carries
-// classification) but distinctive enough to spot in `kubectl describe
-// pod` while triaging.
-//
-// Supported Ubuntu set: 20.04 / 22.04 / 24.04 / 26.04. Mirrors
-// oms-controller's `complicatedPatchSpec` -- if either side widens the
-// set, mirror the other.
+// Supported Ubuntu set: 20.04 / 22.04 / 24.04 / 26.04. Add new LTS
+// versions here as we adopt them.
 //
 // image-patcher is fully Ubuntu-coupled today (APT block uses apt-get
 // and $VERSION_CODENAME from /etc/os-release), so emitting this check
 // unconditionally doesn't reduce capability -- it just surfaces an
 // assumption that was already baked in.
-const imageOSCheckCommand = `[ -r /etc/os-release ] || ` +
-	`{ echo "ImageOSNotSupported: /etc/os-release missing or unreadable" >&2; exit 42; }; ` +
+const imageOSCheckCommand = `[ -r /etc/os-release ] || exit 42; ` +
 	`. /etc/os-release; ` +
-	`[ "$ID" = "ubuntu" ] || ` +
-	`{ echo "ImageOSNotSupported: id=${ID:-unknown} pretty=${PRETTY_NAME:-unknown}" >&2; exit 42; }; ` +
+	`[ "$ID" = "ubuntu" ] || exit 42; ` +
 	`case "$VERSION_ID" in ` +
 	`20.04|22.04|24.04|26.04) ;; ` +
-	`*) echo "ImageOSNotSupported: ubuntu_version=${VERSION_ID:-unknown}" >&2; exit 42 ;; ` +
+	`*) exit 42 ;; ` +
 	`esac`
 
 // GenerateDockerfile generates a Dockerfile from the ImagePatch CR spec.

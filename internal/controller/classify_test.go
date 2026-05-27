@@ -112,42 +112,59 @@ GET https://private.io/v2/x/manifests/latest: MANIFEST_UNKNOWN: manifest unknown
 			want: FailureLabelNetworkError,
 		},
 
-		// --- ImageOSNotSupported: sentinel from oms-controller's check-os step ---
+		// --- ImageOSNotSupported: exit-42 from the built-in check-os guard ---
 		{
-			// Bare marker on a single line, the common case: shell guard
-			// hits the failure branch on a non-Ubuntu base image and
-			// exits with the sentinel as its only stderr output.
-			name: "check-os marker only",
-			log:  `ImageOSNotSupported: id=alpine pretty=Alpine Linux v3.19`,
+			// The shape kaniko prints on real check-os failure: its
+			// terminal `error building image:` line carries the
+			// structural `waiting for process to exit: exit status 42`
+			// suffix from the failed RUN.
+			name: "check-os exit 42 (real kaniko terminal line)",
+			log:  `error building image: error building stage: failed to execute command: waiting for process to exit: exit status 42`,
 			want: FailureLabelImageOSNotSupported,
 		},
 		{
-			// Marker amid surrounding shell noise -- still wins.
-			name: "check-os marker with shell preamble",
-			log: `+ . /etc/os-release
-+ '[' alpine '!=' ubuntu ']'
-+ echo 'ImageOSNotSupported: id=alpine pretty=Alpine Linux v3.19'
-ImageOSNotSupported: id=alpine pretty=Alpine Linux v3.19
-+ exit 42`,
-			want: FailureLabelImageOSNotSupported,
-		},
-		{
-			// Priority: marker outranks every other rule. Even if a
-			// genuine 401 also sits in the log tail (it shouldn't in
+			// Priority: exit 42 outranks every other rule. Even if a
+			// 401 also sits in the same log tail (won't happen in
 			// practice, but tail length isn't strictly bounded), the
-			// sentinel wins because it's controller-owned.
-			name: "check-os marker outranks unauthorized",
-			log: `ImageOSNotSupported: ubuntu_version=18.04
-unauthorized: authentication required`,
+			// exit-42 line wins.
+			name: "check-os exit 42 outranks unauthorized",
+			log: `unauthorized: authentication required
+error building image: error building stage: failed to execute command: waiting for process to exit: exit status 42`,
 			want: FailureLabelImageOSNotSupported,
 		},
 		{
-			// Case-sensitive on purpose. A lowercase mention in some
-			// random upstream package's log line must NOT trigger the
-			// label -- the marker is ours, written with exactly that
-			// capitalisation.
-			name: "lowercase imageosnotsupported does not match",
-			log:  `some package emitted imageosnotsupported: probably a warning`,
+			// Boundary: kaniko's `\b` boundaries reject "exit status
+			// 420" / "exit status 4242" -- otherwise an unrelated
+			// failure that happens to print a 4-digit code starting
+			// with 42 would mis-label.
+			name: "exit status 420 must not match exit-42 rule",
+			log:  `error building image: error building stage: failed to execute command: waiting for process to exit: exit status 420`,
+			want: FailureLabelControllerInternalError,
+		},
+		{
+			// Real kaniko log captured against a Noble (24.04, supported)
+			// base where check-os silently passed but the downstream
+			// apt-get install hit held broken packages. The exit-status
+			// suffix is 100 (apt-get's "unable to correct"), not 42, so
+			// the classifier falls through to ControllerInternalError --
+			// which is what apt-conflicts deserve (users can't fix
+			// upstream mirror state; needs ops attention).
+			//
+			// This is the exact regression that motivated dropping the
+			// printed marker: with the old `Contains("ImageOSNotSupported:")`
+			// rule the four INFO lines below all carried that substring
+			// (kaniko echoes every RUN's command body verbatim) and
+			// false-triggered the label.
+			name: "kaniko INFO echoing check-os body must not false-trigger when downstream RUN failed",
+			log: `INFO[0000] No cached layer found for cmd RUN [ -r /etc/os-release ] || exit 42; . /etc/os-release; [ "$ID" = "ubuntu" ] || exit 42; case "$VERSION_ID" in 20.04|22.04|24.04|26.04) ;; *) exit 42 ;; esac
+INFO[0299] RUN [ -r /etc/os-release ] || exit 42; . /etc/os-release; [ "$ID" = "ubuntu" ] || exit 42; esac
+INFO[0330] Args: [-c [ -r /etc/os-release ] || exit 42]
+INFO[0330] Running: [/bin/sh -c [ -r /etc/os-release ] || exit 42]
+INFO[0336] RUN apt-get -q update && apt-get -q install -y tini fuse-overlayfs crun openssh-server supervisor curl ca-certificates
+The following packages have unmet dependencies:
+ openssh-server : Depends: openssh-client (= 1:9.6p1-3ubuntu13) but 1:9.6p1-3ubuntu13.12 is to be installed
+E: Unable to correct problems, you have held broken packages.
+error building image: error building stage: failed to execute command: waiting for process to exit: exit status 100`,
 			want: FailureLabelControllerInternalError,
 		},
 		{
