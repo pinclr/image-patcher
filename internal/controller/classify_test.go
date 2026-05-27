@@ -112,6 +112,45 @@ GET https://private.io/v2/x/manifests/latest: MANIFEST_UNKNOWN: manifest unknown
 			want: FailureLabelNetworkError,
 		},
 
+		// --- ImageOSNotSupported: sentinel from oms-controller's check-os step ---
+		{
+			// Bare marker on a single line, the common case: shell guard
+			// hits the failure branch on a non-Ubuntu base image and
+			// exits with the sentinel as its only stderr output.
+			name: "check-os marker only",
+			log:  `ImageOSNotSupported: id=alpine pretty=Alpine Linux v3.19`,
+			want: FailureLabelImageOSNotSupported,
+		},
+		{
+			// Marker amid surrounding shell noise -- still wins.
+			name: "check-os marker with shell preamble",
+			log: `+ . /etc/os-release
++ '[' alpine '!=' ubuntu ']'
++ echo 'ImageOSNotSupported: id=alpine pretty=Alpine Linux v3.19'
+ImageOSNotSupported: id=alpine pretty=Alpine Linux v3.19
++ exit 42`,
+			want: FailureLabelImageOSNotSupported,
+		},
+		{
+			// Priority: marker outranks every other rule. Even if a
+			// genuine 401 also sits in the log tail (it shouldn't in
+			// practice, but tail length isn't strictly bounded), the
+			// sentinel wins because it's controller-owned.
+			name: "check-os marker outranks unauthorized",
+			log: `ImageOSNotSupported: ubuntu_version=18.04
+unauthorized: authentication required`,
+			want: FailureLabelImageOSNotSupported,
+		},
+		{
+			// Case-sensitive on purpose. A lowercase mention in some
+			// random upstream package's log line must NOT trigger the
+			// label -- the marker is ours, written with exactly that
+			// capitalisation.
+			name: "lowercase imageosnotsupported does not match",
+			log:  `some package emitted imageosnotsupported: probably a warning`,
+			want: FailureLabelControllerInternalError,
+		},
+
 		// --- ControllerInternalError: no usable signal -> contact-support bucket ---
 		{
 			name: "oom killed -> unknown",
@@ -153,6 +192,7 @@ func TestIsKnownFailureLabel(t *testing.T) {
 	known := []string{
 		FailureLabelInvalidImage,
 		FailureLabelNetworkError,
+		FailureLabelImageOSNotSupported,
 		FailureLabelControllerInternalError,
 	}
 	for _, s := range known {

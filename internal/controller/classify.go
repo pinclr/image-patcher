@@ -50,8 +50,21 @@ import (
 const (
 	FailureLabelInvalidImage            = "InvalidImage"
 	FailureLabelNetworkError            = "NetworkError"
+	FailureLabelImageOSNotSupported     = "ImageOSNotSupported"
 	FailureLabelControllerInternalError = "ControllerInternalError"
 )
+
+// imageOSNotSupportedMarker is the sentinel string our caller (oms-controller)
+// emits from the check-os shell step it prepends to every patch build. The
+// step exits non-zero with this prefix on stderr when the base image's
+// /etc/os-release reports a non-Ubuntu distro or a Ubuntu version outside
+// the supported set, giving us a precise classification that the generic
+// "apt-get failed" / "exit 1" tail couldn't.
+//
+// Matched case-sensitively (unlike the keyword sets below): the string is
+// one we own, never user-supplied, so we avoid accidentally hitting a
+// lowercase "imageosnotsupported" in some upstream package's log line.
+const imageOSNotSupportedMarker = "ImageOSNotSupported:"
 
 // IsKnownFailureLabel reports whether s is one of the FailureLabel*
 // constants -- i.e. a message produced by a previous run of
@@ -85,6 +98,7 @@ func IsKnownFailureLabel(s string) bool {
 	switch s {
 	case FailureLabelInvalidImage,
 		FailureLabelNetworkError,
+		FailureLabelImageOSNotSupported,
 		FailureLabelControllerInternalError:
 		return true
 	}
@@ -160,20 +174,32 @@ func classifyBuildFailure(ctx context.Context, kube kubernetes.Interface, job *b
 // split out so the keyword matrix can be unit-tested without an API
 // server. Order matters:
 //
-//  1. InvalidImage first -- the union of "auth required at the registry"
-//     and "image doesn't exist at the registry". Both share keywords
-//     that registries often interchange (Harbor returns 404 for
-//     unauthorized requests to avoid info-leak), and the actionable
-//     advice is the same on either branch.
-//  2. NetworkError -- DNS / TCP / proxy failures. Kept distinct because
+//  1. ImageOSNotSupported first, matched case-sensitively against the
+//     sentinel string we emit ourselves from the prepended check-os
+//     shell step. Highest priority because the marker is unambiguous
+//     and pre-empts any incidental keyword hit later in the log.
+//  2. InvalidImage -- union of "auth required at the registry" and
+//     "image doesn't exist at the registry". Both share keywords that
+//     registries often interchange (Harbor returns 404 for unauthorized
+//     requests to avoid info-leak), and the actionable advice is the
+//     same on either branch.
+//  3. NetworkError -- DNS / TCP / proxy failures. Kept distinct because
 //     these are operator-side (proxy / mirror config) and the user has
 //     no lever to pull. Order-wise: a rare Kaniko proxy 407 would
 //     contain "unauthorized" and get mis-classed as InvalidImage --
 //     acceptable, since in our environment 407 is essentially never
 //     seen and the surrounding signal is usually clear enough that the
 //     operator can still triage from the logs.
-//  3. Everything else -> ControllerInternalError.
+//  4. Everything else -> ControllerInternalError.
 func classifyLogTail(logTail string) string {
+	// Case-sensitive: marker is controller-owned, never user-supplied;
+	// pre-empts every later rule so an unsupported-OS build doesn't get
+	// downgraded into "network error" by an incidental apt-mirror DNS
+	// failure that happened earlier in the same log tail.
+	if strings.Contains(logTail, imageOSNotSupportedMarker) {
+		return FailureLabelImageOSNotSupported
+	}
+
 	low := strings.ToLower(logTail)
 
 	// InvalidImage: registry returned either an auth challenge or a
