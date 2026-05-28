@@ -31,7 +31,7 @@
       "type": "timeseries",
       "id": 1,
       "title": "Builds over time",
-      "description": "Count of terminal builds per time bucket, stacked by result. Use `increase()` rather than rate so low-traffic clusters (canary-dominant) still show as integer bars. Apply $canary / $dedup_hit / $layer_cache filters to scope what's counted.",
+      "description": "Count of terminal builds per time bucket, stacked by result. Use `increase()` rather than rate so low-traffic clusters (canary-dominant) still show as integer bars. Apply $canary / $build_cache_hit / $layer_cache filters to scope what's counted.",
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 1},
       "fieldConfig": {
@@ -64,7 +64,7 @@
         {
           "refId": "A",
           "datasource": {"type": "prometheus", "uid": "${datasource}"},
-          "expr": "sum by (result) (increase(image_patcher_builds_total{dedup_hit=~\"$dedup_hit\",build_layer_cache_disabled=~\"$layer_cache\",canary=~\"$canary\"}[$__rate_interval]))",
+          "expr": "sum by (result) (increase(image_patcher_builds_total{build_cache_hit=~\"$build_cache_hit\",build_layer_cache_hit=~\"$layer_cache\",canary=~\"$canary\"}[$__rate_interval]))",
           "legendFormat": "{{result}}"
         }
       ]
@@ -101,7 +101,7 @@
         {
           "refId": "A",
           "datasource": {"type": "prometheus", "uid": "${datasource}"},
-          "expr": "sum(rate(image_patcher_builds_total{result=\"succeeded\",dedup_hit=~\"$dedup_hit\",build_layer_cache_disabled=~\"$layer_cache\",canary=~\"$canary\"}[24h])) / clamp_min(sum(rate(image_patcher_builds_total{dedup_hit=~\"$dedup_hit\",build_layer_cache_disabled=~\"$layer_cache\",canary=~\"$canary\"}[24h])), 1e-9)"
+          "expr": "sum(rate(image_patcher_builds_total{result=\"succeeded\",build_cache_hit=~\"$build_cache_hit\",build_layer_cache_hit=~\"$layer_cache\",canary=~\"$canary\"}[24h])) / clamp_min(sum(rate(image_patcher_builds_total{build_cache_hit=~\"$build_cache_hit\",build_layer_cache_hit=~\"$layer_cache\",canary=~\"$canary\"}[24h])), 1e-9)"
         }
       ]
     },
@@ -127,7 +127,7 @@
         {
           "refId": "A",
           "datasource": {"type": "prometheus", "uid": "${datasource}"},
-          "expr": "sum(image_patcher_builds_total{dedup_hit=~\"$dedup_hit\",build_layer_cache_disabled=~\"$layer_cache\",canary=~\"$canary\"})"
+          "expr": "sum(image_patcher_builds_total{build_cache_hit=~\"$build_cache_hit\",build_layer_cache_hit=~\"$layer_cache\",canary=~\"$canary\"})"
         }
       ]
     },
@@ -152,7 +152,7 @@
         {
           "refId": "A",
           "datasource": {"type": "prometheus", "uid": "${datasource}"},
-          "expr": "topk(10, sum by (image) (image_patcher_builds_total{dedup_hit=~\"$dedup_hit\",build_layer_cache_disabled=~\"$layer_cache\",canary=~\"$canary\"}))",
+          "expr": "topk(10, sum by (image) (image_patcher_builds_total{build_cache_hit=~\"$build_cache_hit\",build_layer_cache_hit=~\"$layer_cache\",canary=~\"$canary\"}))",
           "legendFormat": "{{image}}",
           "instant": true
         }
@@ -170,7 +170,7 @@
       "type": "timeseries",
       "id": 5,
       "title": "Build vs E2E duration per build",
-      "description": "Two lines per bucket: average build_duration_seconds (Kaniko Job wall time, dedup hits excluded) and average e2e_seconds (CR creation -> terminal, includes reconciler queue and Pod scheduling, dedup hits included). At low traffic each bucket holds 0-1 builds so the average IS the per-build duration. Apply $canary / $dedup_hit / $layer_cache to scope.",
+      "description": "Two lines per bucket: average build_duration_seconds (Kaniko Job wall time, dedup hits excluded) and average e2e_seconds (CR creation -> terminal, includes reconciler queue and Pod scheduling, dedup hits included). At low traffic each bucket holds 0-1 builds so the average IS the per-build duration. Apply $canary / $build_cache_hit / $layer_cache to scope.",
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "gridPos": {"h": 8, "w": 24, "x": 0, "y": 10},
       "fieldConfig": {
@@ -187,13 +187,13 @@
         {
           "refId": "A",
           "datasource": {"type": "prometheus", "uid": "${datasource}"},
-          "expr": "rate(image_patcher_build_duration_seconds_sum{build_layer_cache_disabled=~\"$layer_cache\",canary=~\"$canary\"}[$__rate_interval]) / rate(image_patcher_build_duration_seconds_count{build_layer_cache_disabled=~\"$layer_cache\",canary=~\"$canary\"}[$__rate_interval])",
+          "expr": "rate(image_patcher_build_duration_seconds_sum{build_layer_cache_hit=~\"$layer_cache\",canary=~\"$canary\"}[$__rate_interval]) / rate(image_patcher_build_duration_seconds_count{build_layer_cache_hit=~\"$layer_cache\",canary=~\"$canary\"}[$__rate_interval])",
           "legendFormat": "build (Kaniko)"
         },
         {
           "refId": "B",
           "datasource": {"type": "prometheus", "uid": "${datasource}"},
-          "expr": "rate(image_patcher_e2e_seconds_sum{dedup_hit=~\"$dedup_hit\",build_layer_cache_disabled=~\"$layer_cache\",canary=~\"$canary\"}[$__rate_interval]) / rate(image_patcher_e2e_seconds_count{dedup_hit=~\"$dedup_hit\",build_layer_cache_disabled=~\"$layer_cache\",canary=~\"$canary\"}[$__rate_interval])",
+          "expr": "rate(image_patcher_e2e_seconds_sum{build_cache_hit=~\"$build_cache_hit\",build_layer_cache_hit=~\"$layer_cache\",canary=~\"$canary\"}[$__rate_interval]) / rate(image_patcher_e2e_seconds_count{build_cache_hit=~\"$build_cache_hit\",build_layer_cache_hit=~\"$layer_cache\",canary=~\"$canary\"}[$__rate_interval])",
           "legendFormat": "e2e (CR creation -> terminal)"
         }
       ]
@@ -372,7 +372,7 @@
         {
           "refId": "A",
           "datasource": {"type": "prometheus", "uid": "${datasource}"},
-          "expr": "sum by (failure_reason) (increase(image_patcher_builds_total{result=\"failed\",dedup_hit=~\"$dedup_hit\",build_layer_cache_disabled=~\"$layer_cache\",canary=~\"$canary\"}[$__rate_interval]))",
+          "expr": "sum by (failure_reason) (increase(image_patcher_builds_total{result=\"failed\",build_cache_hit=~\"$build_cache_hit\",build_layer_cache_hit=~\"$layer_cache\",canary=~\"$canary\"}[$__rate_interval]))",
           "legendFormat": "{{failure_reason}}"
         }
       ]
@@ -399,11 +399,11 @@
         "type": "datasource"
       },
       {
-        "name": "dedup_hit",
-        "label": "dedup_hit",
+        "name": "build_cache_hit",
+        "label": "build_cache_hit",
         "type": "query",
         "datasource": {"type": "prometheus", "uid": "${datasource}"},
-        "query": "label_values(image_patcher_builds_total, dedup_hit)",
+        "query": "label_values(image_patcher_builds_total, build_cache_hit)",
         "current": {"selected": false, "text": "All", "value": "$__all"},
         "includeAll": true,
         "multi": true,
@@ -412,10 +412,10 @@
       },
       {
         "name": "layer_cache",
-        "label": "build_layer_cache_disabled",
+        "label": "build_layer_cache_hit",
         "type": "query",
         "datasource": {"type": "prometheus", "uid": "${datasource}"},
-        "query": "label_values(image_patcher_builds_total, build_layer_cache_disabled)",
+        "query": "label_values(image_patcher_builds_total, build_layer_cache_hit)",
         "current": {"selected": false, "text": "All", "value": "$__all"},
         "includeAll": true,
         "multi": true,

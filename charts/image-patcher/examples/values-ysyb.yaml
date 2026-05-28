@@ -87,14 +87,12 @@ metrics:
 dashboards:
   enabled: true
 
-# Synthetic canary: every 10min, walk the 4-case cache-tier matrix
+# Synthetic canary: every 30min, walk the 4-case cache-tier matrix
 # against multiple Ubuntu bases. Higher cadence than the chart
-# default (hourly) so metric movement is visible on dashboards within
-# one tick.
-#
-# 10min x 4 bases x 4 cases ~= one build every 40s on average just
-# for the canary; ysyb's registry retention absorbs the per-tick
-# dedup tag writes (1 per base per tick).
+# default (hourly) but lighter than once-every-10min -- 4 bases x 4
+# cases sequentially per tick is already heavy (~one build every
+# 2min average during a tick window), and 30min cadence gives the
+# registry's retention room to breathe between bursts.
 healthcheck:
   enabled: true
   schedule: "*/10 * * * *"
