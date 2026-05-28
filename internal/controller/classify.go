@@ -226,21 +226,27 @@ func classifyLogTail(logTail string) string {
 
 	// Shell-unrunnable form. GenerateDockerfile pins SHELL to /bin/sh
 	// (see imagepatch_controller.go), so every kaniko RUN goes through
-	// /bin/sh -- if execve on /bin/sh fails for any reason the build is
-	// dead. Anchored on kaniko's full "starting command" error prefix
-	// rather than a bare `fork/exec /bin/sh:` substring: the longer
-	// form is the structural wording kaniko uses on its exec-failure
-	// path (vs. `waiting for process to exit:` for runtime exits), so
-	// the match is harder to false-trigger on incidental log content
-	// while still covering every trailing reason:
+	// execve("/bin/sh", ...). Two specific errno strings -- and ONLY
+	// those two -- get classified as ImageOSNotSupported:
 	//
-	//   "...fork/exec /bin/sh: no such file or directory"  -- scratch / distroless
-	//   "...fork/exec /bin/sh: exec format error"          -- wrong arch
-	//   "...fork/exec /bin/sh: <future kaniko wording>"    -- defensive coverage
+	//   ENOENT  "...fork/exec /bin/sh: no such file or directory"
+	//           scratch / distroless (no /bin/sh) or its ELF loader /
+	//           shared libs are missing
+	//   ENOEXEC "...fork/exec /bin/sh: exec format error"
+	//           /bin/sh exists but is the wrong CPU architecture
+	//
+	// Other execve errnos (ENOMEM "cannot allocate memory" -- node OOM,
+	// E2BIG "argument list too long" -- our own bug, EACCES "permission
+	// denied", ...) fall through to ControllerInternalError on purpose:
+	// those are operator-side or controller-side problems, NOT
+	// "user's image is unpatchable", and conflating them would route a
+	// node-OOM page into the wrong remediation bucket.
 	//
 	// Goes before InvalidImage so it isn't shadowed by an incidental
 	// "unauthorized" elsewhere in the tail.
-	if strings.Contains(low, "failed to execute command: starting command: fork/exec /bin/sh:") {
+	const forkExecPrefix = "failed to execute command: starting command: fork/exec /bin/sh: "
+	if strings.Contains(low, forkExecPrefix+"no such file or directory") ||
+		strings.Contains(low, forkExecPrefix+"exec format error") {
 		return FailureLabelImageOSNotSupported
 	}
 

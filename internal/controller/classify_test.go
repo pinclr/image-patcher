@@ -198,6 +198,20 @@ INFO[0000] Running: [/bin/sh -c [ -r /etc/os-release ] || exit 42; . /etc/os-rel
 error building image: error building stage: failed to execute command: starting command: fork/exec /bin/sh: exec format error`,
 			want: FailureLabelImageOSNotSupported,
 		},
+		{
+			// Negative case: any execve errno other than ENOENT /
+			// ENOEXEC must NOT be classified as ImageOSNotSupported.
+			// ENOMEM here represents the "node OOM" failure mode --
+			// it's our cluster's problem, not the user's image. The
+			// loose match `fork/exec /bin/sh:` would have caught this
+			// as ImageOSNotSupported and routed an ops page into the
+			// wrong remediation bucket. Falls through to
+			// ControllerInternalError so the operator sees the right
+			// label.
+			name: "kaniko fork/exec ENOMEM must NOT match (node OOM, not image issue)",
+			log:  `error building image: error building stage: failed to execute command: starting command: fork/exec /bin/sh: cannot allocate memory`,
+			want: FailureLabelControllerInternalError,
+		},
 
 		// --- ControllerInternalError: no usable signal -> contact-support bucket ---
 		{
