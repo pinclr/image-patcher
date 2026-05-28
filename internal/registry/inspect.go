@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -65,13 +66,14 @@ var ErrPlatformNotSupported = errors.New("ImageOSNotSupported")
 // the correct trade -- the gateway must never assert "your image is
 // broken" without proof.
 func RejectIfPlatformMismatch(ctx context.Context, ref, targetOS, targetArch string) error {
+	// Diagnostic logging is written to stderr via the stdlib logger so
+	// every fail-open path is observable in kubectl logs. Without this
+	// we'd silently return nil and have no way to tell whether
+	// pre-flight ran but couldn't reach the registry, or whether it
+	// ran and saw a matching platform. Cheap, single-line per outcome.
 	parsed, err := name.ParseReference(ref)
 	if err != nil {
-		// Malformed refs fall through to the build, where kaniko's
-		// own parse will surface the same problem. Pre-flight isn't
-		// the right layer to reject this: doing so couples the
-		// rejection to whatever parser version we ship vs. the one
-		// kaniko ships, which can diverge.
+		log.Printf("preflight: ref=%q parse_error=%v -> fail-open", ref, err)
 		return nil
 	}
 
@@ -80,16 +82,19 @@ func RejectIfPlatformMismatch(ctx context.Context, ref, targetOS, targetArch str
 		remote.WithContext(ctx),
 	)
 	if err != nil {
-		return nil // fail-open on every registry error -- see godoc above
+		log.Printf("preflight: ref=%q registry_error=%v -> fail-open", ref, err)
+		return nil
 	}
 
 	if desc.MediaType.IsIndex() {
 		idx, err := desc.ImageIndex()
 		if err != nil {
+			log.Printf("preflight: ref=%q index_decode_error=%v -> fail-open", ref, err)
 			return nil
 		}
 		manifest, err := idx.IndexManifest()
 		if err != nil {
+			log.Printf("preflight: ref=%q index_manifest_error=%v -> fail-open", ref, err)
 			return nil
 		}
 		for _, m := range manifest.Manifests {
@@ -97,27 +102,33 @@ func RejectIfPlatformMismatch(ctx context.Context, ref, targetOS, targetArch str
 				continue
 			}
 			if m.Platform.OS == targetOS && m.Platform.Architecture == targetArch {
+				log.Printf("preflight: ref=%q index_has_target=%s/%s -> accept", ref, targetOS, targetArch)
 				return nil
 			}
 		}
+		available := formatAvailablePlatforms(manifest.Manifests)
+		log.Printf("preflight: ref=%q index_missing_target=%s/%s available=%s -> reject", ref, targetOS, targetArch, available)
 		return fmt.Errorf("%w: image %s does not include %s/%s; available: %s",
-			ErrPlatformNotSupported, ref, targetOS, targetArch,
-			formatAvailablePlatforms(manifest.Manifests))
+			ErrPlatformNotSupported, ref, targetOS, targetArch, available)
 	}
 
 	// Single-platform manifest. The OS/arch live in the config blob,
 	// not the manifest, so we fetch the config explicitly.
 	img, err := desc.Image()
 	if err != nil {
+		log.Printf("preflight: ref=%q image_decode_error=%v -> fail-open", ref, err)
 		return nil
 	}
 	cfg, err := img.ConfigFile()
 	if err != nil {
+		log.Printf("preflight: ref=%q config_fetch_error=%v -> fail-open", ref, err)
 		return nil
 	}
 	if cfg.OS == targetOS && cfg.Architecture == targetArch {
+		log.Printf("preflight: ref=%q platform=%s/%s -> accept", ref, cfg.OS, cfg.Architecture)
 		return nil
 	}
+	log.Printf("preflight: ref=%q platform=%s/%s expected=%s/%s -> reject", ref, cfg.OS, cfg.Architecture, targetOS, targetArch)
 	return fmt.Errorf("%w: image %s is %s/%s, expected %s/%s",
 		ErrPlatformNotSupported, ref, cfg.OS, cfg.Architecture, targetOS, targetArch)
 }
