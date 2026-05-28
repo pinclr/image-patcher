@@ -87,16 +87,28 @@ metrics:
 dashboards:
   enabled: true
 
-# Synthetic canary: every 10min push a noop ImagePatch to validate the
-# full build pipeline. Stable target tag under a dedicated registry
-# path so patched-images/ doesn't accumulate canary artifacts.
+# Synthetic canary: every 30min, walk the 4-case cache-tier matrix
+# against multiple Ubuntu bases. Higher cadence than the chart
+# default (hourly) but lighter than once-every-10min -- 4 bases x 4
+# cases sequentially per tick is already heavy (~one build every
+# 2min average during a tick window), and 30min cadence gives the
+# registry's retention room to breathe between bursts.
 healthcheck:
   enabled: true
+  schedule: "*/10 * * * *"
   # kubectl image mirrored into the private registry so we don't depend
   # on docker.io reachability per probe run.
   image: registry.luna.ogpu.cloud/image-patch-system/kubectl:1.31
-  # Internal base; docker.io is blocked from build pods on this cluster
-  # (cluster DNS returns SERVFAIL for index.docker.io and image-registry
-  # -secret only carries creds for luna + ACR).
-  baseImage: registry.luna.ogpu.cloud/luna/ubuntu-22.04:latest
+  # Internal bases; docker.io is blocked from build pods on this
+  # cluster (cluster DNS returns SERVFAIL for index.docker.io and
+  # image-registry-secret only carries creds for luna + ACR).
+  # The noble (24.04) base exercises the deb822 sources.list.d
+  # codepath (#27); 26.04 may not be published yet -- expected to
+  # show as [FAIL] case-ubuntu-26.04-first until the base ref
+  # exists, and that failure is the signal.
+  baseImages:
+    - registry.luna.ogpu.cloud/luna/ubuntu-22.04:latest
+    - registry.luna.ogpu.cloud/luna/ubuntu:24.04
+    - registry.luna.ogpu.cloud/luna/ubuntu:20.04
+    - registry.luna.ogpu.cloud/luna/ubuntu:26.04
   targetImage: registry.luna.ogpu.cloud/image-patch-system/healthcheck-noop:latest
