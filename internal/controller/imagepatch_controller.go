@@ -339,7 +339,7 @@ func (r *ImagePatchReconciler) tryDedupShortCircuit(ctx context.Context, cr *oms
 		return false, err
 	}
 	metrics.RecordBuildResult(metrics.ResultSucceeded, destination, metrics.FailureReasonNone,
-		true /*dedupHit*/, buildLayerCacheDisabled(cr),
+		true /*dedupHit*/, buildLayerCacheDisabled(cr), isCanary(cr),
 		cr.CreationTimestamp.Time, time.Time{} /*no Job*/, time.Time{})
 	l.Info("dedup hit: skipped build", "imagepatch", cr.Name, "dedupRef", dedupRef, "destination", destination, "specHash", specHash)
 	return true, nil
@@ -370,7 +370,7 @@ func recordTerminalBuild(cr *omsv1alpha1.ImagePatch, newPhase, targetImage strin
 		end = job.Status.CompletionTime.Time
 	}
 	metrics.RecordBuildResult(result, targetImage, failureReason,
-		false /*dedupHit*/, buildLayerCacheDisabled(cr),
+		false /*dedupHit*/, buildLayerCacheDisabled(cr), isCanary(cr),
 		cr.CreationTimestamp.Time, start, end)
 }
 
@@ -384,6 +384,15 @@ func recordTerminalBuild(cr *omsv1alpha1.ImagePatch, newPhase, targetImage strin
 // layer cache" use a Kaniko-side metric, not this label.
 func buildLayerCacheDisabled(cr *omsv1alpha1.ImagePatch) bool {
 	return cr.Spec.BuildOptions != nil && boolPtrTrue(cr.Spec.BuildOptions.DisableBuildLayerCache)
+}
+
+// isCanary returns whether the CR was submitted by the chart's
+// healthcheck CronJob. Driven by the image-patcher.healthcheck/canary
+// label which the probe script stamps on every CR it creates.
+// Dashboards filter canary=false by default so the synthetic per-tick
+// load doesn't dominate production graphs.
+func isCanary(cr *omsv1alpha1.ImagePatch) bool {
+	return cr.Labels["image-patcher.healthcheck/canary"] == "true"
 }
 
 // jobFailureReason classifies a failed build into one of the bounded

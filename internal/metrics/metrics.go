@@ -71,9 +71,9 @@ var (
 		prometheus.CounterOpts{
 			Namespace: namespace,
 			Name:      "builds_total",
-			Help:      "Image builds that reached a terminal state, by result, target image, failure reason (none for successes), whether the build was short-circuited via content-addressed dedup (dedup_hit=true means no Kaniko Job ran), and whether the CR opted out of Kaniko's RUN-layer cache via spec.buildOptions.disableBuildLayerCache.",
+			Help:      "Image builds that reached a terminal state, by result, target image, failure reason (none for successes), whether the build was short-circuited via content-addressed dedup (dedup_hit=true means no Kaniko Job ran), whether the CR opted out of Kaniko's RUN-layer cache (build_layer_cache_disabled), and whether the CR is a healthcheck canary (canary=true; sourced from the image-patcher.healthcheck/canary CR label, lets dashboards filter the synthetic load out of production graphs).",
 		},
-		[]string{"result", "registry", "image", "failure_reason", "dedup_hit", "build_layer_cache_disabled"},
+		[]string{"result", "registry", "image", "failure_reason", "dedup_hit", "build_layer_cache_disabled", "canary"},
 	)
 
 	buildDurationSeconds = prometheus.NewHistogramVec(
@@ -83,7 +83,7 @@ var (
 			Help:      "Wall time from Kaniko Job startTime to the terminal transition observed by the reconciler. Excludes reconciler queue + Pod scheduling time; for the full CR-creation-to-terminal duration use image_patcher_e2e_seconds.",
 			Buckets:   buildDurationBuckets,
 		},
-		[]string{"result", "registry", "image", "build_layer_cache_disabled"},
+		[]string{"result", "registry", "image", "build_layer_cache_disabled", "canary"},
 	)
 
 	e2eSeconds = prometheus.NewHistogramVec(
@@ -93,7 +93,7 @@ var (
 			Help:      "Wall time from ImagePatch CR creation timestamp to the terminal transition observed by the reconciler. Includes reconciler queue wait, ConfigMap+Job creation, Pod scheduling, Kaniko build, push, and Status.Update. Always observed -- including dedup hits, which typically land in the smallest bucket (registry HEAD+PUT only).",
 			Buckets:   buildDurationBuckets,
 		},
-		[]string{"result", "registry", "image", "dedup_hit", "build_layer_cache_disabled"},
+		[]string{"result", "registry", "image", "dedup_hit", "build_layer_cache_disabled", "canary"},
 	)
 
 	reconcileFailuresTotal = prometheus.NewCounterVec(
@@ -151,11 +151,13 @@ func init() {
 //
 // failureReason is a bounded enum (FailureReason* constants); pass
 // FailureReasonNone for successes. dedupHit / buildLayerCacheDisabled
-// become labels so dashboards can split per cache state.
-func RecordBuildResult(result, targetImage, failureReason string, dedupHit, buildLayerCacheDisabled bool, crCreated, jobStarted, endTime time.Time) {
+// / canary become labels so dashboards can split per cache state and
+// filter out synthetic canary load.
+func RecordBuildResult(result, targetImage, failureReason string, dedupHit, buildLayerCacheDisabled, canary bool, crCreated, jobStarted, endTime time.Time) {
 	registry, image := SplitImageRef(targetImage)
 	dedupHitLabel := strconv.FormatBool(dedupHit)
 	bldLayerLabel := strconv.FormatBool(buildLayerCacheDisabled)
+	canaryLabel := strconv.FormatBool(canary)
 
 	buildsTotal.With(prometheus.Labels{
 		"result":                     result,
@@ -164,6 +166,7 @@ func RecordBuildResult(result, targetImage, failureReason string, dedupHit, buil
 		"failure_reason":             failureReason,
 		"dedup_hit":                  dedupHitLabel,
 		"build_layer_cache_disabled": bldLayerLabel,
+		"canary":                     canaryLabel,
 	}).Inc()
 
 	if endTime.IsZero() {
@@ -177,6 +180,7 @@ func RecordBuildResult(result, targetImage, failureReason string, dedupHit, buil
 			"image":                      image,
 			"dedup_hit":                  dedupHitLabel,
 			"build_layer_cache_disabled": bldLayerLabel,
+			"canary":                     canaryLabel,
 		}).Observe(endTime.Sub(crCreated).Seconds())
 	}
 
@@ -189,6 +193,7 @@ func RecordBuildResult(result, targetImage, failureReason string, dedupHit, buil
 			"registry":                   registry,
 			"image":                      image,
 			"build_layer_cache_disabled": bldLayerLabel,
+			"canary":                     canaryLabel,
 		}).Observe(endTime.Sub(jobStarted).Seconds())
 	}
 }

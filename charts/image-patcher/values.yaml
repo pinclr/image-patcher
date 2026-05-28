@@ -197,30 +197,35 @@ metrics:
 # plus the cache machinery, without depending on external package
 # mirrors.
 #
-# Test sequence per tick (sequential):
+# Test sequence per tick (per base image, sequential):
 #   first      caches on, fresh hash         expect: build runs, no dedup hit
 #   hit        same spec as first            expect: dedup HIT, no Job
 #   nobcache   disableBuildCache             expect: no hit, build runs
 #   nolayer    +disableBuildLayerCache       expect: --cache=true absent in Kaniko args
 #
+# Total CRs per tick = 4 cases * len(baseImages). Per-case user tags
+# include the base image identifier (last segment of the ref, ':' ->
+# '-'), so metric and registry cardinality remain bounded to one tag
+# per (base, case) pair. Stable across ticks -- only the dedup tags
+# (<repo>:dedup-<hash>) accumulate, one per tick per base.
+#
 # Results surface through controller metrics (builds_total with the
-# image label suffixed by case name) and the per-tick PASS/FAIL summary
+# image label suffixed by base+case) and the per-tick PASS/FAIL summary
 # in the Job log. Successful runs delete their CRs immediately; failed
 # runs are retained for failureRetentionSeconds for debug.
 #
 # Each tick uses a fresh timestamp in the shell RUN so the spec hash
 # is unique per tick (case-1 always builds, case-2 always tests the
-# hit it just wrote). Per-case user tags are stable
-# (<targetImage>-<case>), overwritten each tick, so registry / metric
-# cardinality stays bounded. The hash-derived dedup tag
-# (<repo>:dedup-<hash>) does accumulate one per tick -- set a
-# retention policy on the target repo to cap it.
+# hit it just wrote).
 healthcheck:
   enabled: false
-    # Default: hourly. Each tick runs 4 cases sequentially (3 real
-  # builds + 1 short-circuit), heavier than the previous single-case
-  # canary. Lower to "*/10 * * * *" if you want higher-frequency signal
-  # and your registry retention can absorb the extra dedup tag writes.
+  # Default: hourly. With the multi-base matrix, each tick runs 4
+  # cases x len(baseImages) sequentially (3 real builds + 1 short-
+  # circuit per base). Hourly is conservative -- envs that want
+  # faster metric movement on dashboards should override to "*/10 *
+  # * * *" (see examples/values-ysyb.yaml). Per-tick dedup tag
+  # writes = 1 per base per tick, set retention on the target repo
+  # accordingly.
   schedule: "0 * * * *"
   # Tiny image with kubectl + /bin/sh. Pinned to a kubectl version
   # within one minor of the cluster API server to be safe. The default
@@ -228,14 +233,22 @@ healthcheck:
   # `bitnami/kubectl` tag was retired when Bitnami moved free images
   # to bitnamilegacy/. Override for air-gapped clusters.
   image: rancher/kubectl:v1.31.0
-  # baseImage is intentionally small and ubiquitous so the canary
-  # doesn't depend on package mirrors. targetImage is used as a stem;
-  # the probe writes per-case stable tags by appending "-<case>" (e.g.
-  # healthcheck-noop:latest-first / latest-hit / ...), so the same
-  # repo / tag pattern from prior single-case healthcheck still works.
-  # Leave targetImage empty to fall back to DEFAULT_IMAGE_REGISTRY-
-  # derived naming inside the controller.
-  baseImage: alpine:3.20
+  # Base images to exercise. Each tick runs the full 4-case matrix
+  # against every entry, so total per-tick builds = 4 * len(list).
+  # Each base produces a distinct metric image label so dashboards
+  # can compare per-base behavior (e.g. apt mirror perf on noble vs
+  # jammy). Pick refs reachable from the cluster's build pods --
+  # the docker.io default below works only on clusters that can pull
+  # from docker.io; air-gapped envs should override with internal
+  # mirror refs (see examples/values-ysyb.yaml).
+  baseImages:
+    - ubuntu:22.04
+  # targetImage is used as a stem; the probe writes per-case stable
+  # tags by appending "-<baseId>-<case>" where <baseId> is the base
+  # ref's last segment with ':' replaced by '-' (e.g.
+  # "ubuntu-22.04-latest"). The full per-case tag is therefore
+  # <targetImage>-<baseId>-<case>. Leave targetImage empty to fall
+  # back to DEFAULT_IMAGE_REGISTRY-derived naming inside the controller.
   targetImage: ""
   # Per-case polling timeout. Exceeded for any single case ->
   # [FAIL] for that case; the tick continues with subsequent cases
