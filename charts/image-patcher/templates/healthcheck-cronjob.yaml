@@ -64,8 +64,10 @@ spec:
                   value: {{ .Release.Namespace }}
                 - name: BUILD_NAMESPACE
                   value: {{ default .Release.Namespace .Values.config.buildNamespace | quote }}
-                - name: BASE_IMAGE
-                  value: {{ .Values.healthcheck.baseImage | quote }}
+                - name: BASE_IMAGES
+                  # Space-joined; the probe splits on whitespace. Image refs
+                  # never contain spaces so this is safe.
+                  value: {{ join " " .Values.healthcheck.baseImages | quote }}
                 - name: TARGET_IMAGE
                   value: {{ .Values.healthcheck.targetImage | quote }}
                 - name: CASE_TIMEOUT_SECONDS
@@ -102,7 +104,17 @@ spec:
                         fi
                       done
 
-                  # run_case CASE_NAME OPTS_YAML EXPECT_DEDUP_HIT EXPECT_JOB ABSENT_ARG
+                  # baseId derives a short, filesystem/tag-safe identifier
+                  # from an image ref. Takes the last path segment and
+                  # replaces ':' with '-'. Examples:
+                  #   ubuntu:22.04                                -> ubuntu-22.04
+                  #   registry.luna.ogpu.cloud/luna/ubuntu:24.04  -> ubuntu-24.04
+                  #   registry.luna.ogpu.cloud/luna/ubuntu-22.04:latest -> ubuntu-22.04-latest
+                  base_id() {
+                    printf '%s' "$1" | sed 's|.*/||; s|:|-|g'
+                  }
+
+                  # run_case CASE BASE BASE_ID OPTS_YAML EXPECT_HIT EXPECT_JOB ABSENT_ARG
                   #   OPTS_YAML  full buildOptions block (with leading
                   #              "  buildOptions:" line) or "" to omit.
                   #   EXPECT_*   "true" / "false"
@@ -112,15 +124,17 @@ spec:
                   # script so every case is reported per tick.
                   run_case() {
                     case_name=$1
-                    opts_yaml=$2
-                    expect_hit=$3
-                    expect_job=$4
-                    absent_arg=$5
+                    base=$2
+                    bid=$3
+                    opts_yaml=$4
+                    expect_hit=$5
+                    expect_job=$6
+                    absent_arg=$7
 
-                    cr_name="healthcheck-${case_name}-${TS}"
-                    target="${TARGET_IMAGE}-${case_name}"
+                    cr_name="healthcheck-${bid}-${case_name}-${TS}"
+                    target="${TARGET_IMAGE}-${bid}-${case_name}"
 
-                    echo "===== case-${case_name}: applying ${cr_name} -> ${target} ====="
+                    echo "===== case-${bid}-${case_name}: applying ${cr_name} -> ${target} ====="
                     {
                       printf '%s\n' "apiVersion: oms.ogpu.cloud/v1alpha1"
                       printf '%s\n' "kind: ImagePatch"
@@ -130,8 +144,9 @@ spec:
                       printf '%s\n' "  labels:"
                       printf '%s\n' "    image-patcher.healthcheck/canary: \"true\""
                       printf '    image-patcher.healthcheck/case: %s\n' "${case_name}"
+                      printf '    image-patcher.healthcheck/base: %s\n' "${bid}"
                       printf '%s\n' "spec:"
-                      printf '  baseImage: %s\n' "${BASE_IMAGE}"
+                      printf '  baseImage: %s\n' "${base}"
                       printf '  targetImage: %s\n' "${target}"
                       printf '%s\n' "  shell:"
                       printf '%s\n' "    - name: probe"
@@ -164,7 +179,7 @@ spec:
                     done
 
                     if [ "${phase}" != "Succeeded" ]; then
-                      echo "[FAIL] case-${case_name}: phase=${phase:-<timeout>}; retaining CR for debug"
+                      echo "[FAIL] case-${bid}-${case_name}: phase=${phase:-<timeout>}; retaining CR for debug"
                       FAIL=$((FAIL+1))
                       return
                     fi
@@ -196,12 +211,12 @@ spec:
                     fi
 
                     if [ -n "${fail_msg}" ]; then
-                      echo "[FAIL] case-${case_name}:${fail_msg} retaining for debug"
+                      echo "[FAIL] case-${bid}-${case_name}:${fail_msg} retaining for debug"
                       FAIL=$((FAIL+1))
                       return
                     fi
 
-                    echo "[PASS] case-${case_name}: dedupHit=${actual_hit} jobName=${actual_job:-<empty>}"
+                    echo "[PASS] case-${bid}-${case_name}: dedupHit=${actual_hit} jobName=${actual_job:-<empty>}"
                     PASS=$((PASS+1))
                     kubectl delete imagepatch -n "${NAMESPACE}" "${cr_name}" --ignore-not-found >/dev/null
                   }
@@ -215,10 +230,18 @@ spec:
                       disableBuildCache: true
                       disableBuildLayerCache: true'
 
-                  run_case first    "${NO_OPTS}"       false true  ""
-                  run_case hit      "${NO_OPTS}"       true  false ""
-                  run_case nobcache "${OPTS_NOBCACHE}" false true  ""
-                  run_case nolayer  "${OPTS_NOLAYER}"  false true  "--cache=true"
+                  # Outer loop over BASE_IMAGES (space-separated from
+                  # values.healthcheck.baseImages). $base is naturally word-
+                  # split here -- safe because image refs never contain
+                  # spaces. The inner loop is the 4-case matrix per base.
+                  for base in ${BASE_IMAGES}; do
+                    bid=$(base_id "${base}")
+                    echo "=================== base=${base} (id=${bid}) ==================="
+                    run_case first    "${base}" "${bid}" "${NO_OPTS}"       false true  ""
+                    run_case hit      "${base}" "${bid}" "${NO_OPTS}"       true  false ""
+                    run_case nobcache "${base}" "${bid}" "${OPTS_NOBCACHE}" false true  ""
+                    run_case nolayer  "${base}" "${bid}" "${OPTS_NOLAYER}"  false true  "--cache=true"
+                  done
 
                   echo "===== summary: PASS=${PASS} FAIL=${FAIL} ====="
                   [ "${FAIL}" -eq 0 ] || exit 1

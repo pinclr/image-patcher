@@ -338,8 +338,8 @@ func (r *ImagePatchReconciler) tryDedupShortCircuit(ctx context.Context, cr *oms
 		l.Error(err, "dedup hit: status update failed; will retry", "dedupRef", dedupRef)
 		return false, err
 	}
-	metrics.RecordBuildResult(metrics.ResultSucceeded, destination, metrics.FailureReasonNone,
-		true /*dedupHit*/, buildLayerCacheDisabled(cr),
+	metrics.RecordBuildResult(metrics.ResultSucceeded, destination, cr.Spec.BaseImage, metrics.FailureReasonNone,
+		true /*buildCacheHit*/, buildLayerCacheHit(cr), isCanary(cr),
 		cr.CreationTimestamp.Time, time.Time{} /*no Job*/, time.Time{})
 	l.Info("dedup hit: skipped build", "imagepatch", cr.Name, "dedupRef", dedupRef, "destination", destination, "specHash", specHash)
 	return true, nil
@@ -369,21 +369,30 @@ func recordTerminalBuild(cr *omsv1alpha1.ImagePatch, newPhase, targetImage strin
 	if job.Status.CompletionTime != nil {
 		end = job.Status.CompletionTime.Time
 	}
-	metrics.RecordBuildResult(result, targetImage, failureReason,
-		false /*dedupHit*/, buildLayerCacheDisabled(cr),
+	metrics.RecordBuildResult(result, targetImage, cr.Spec.BaseImage, failureReason,
+		false /*buildCacheHit*/, buildLayerCacheHit(cr), isCanary(cr),
 		cr.CreationTimestamp.Time, start, end)
 }
 
-// buildLayerCacheDisabled reports whether the CR opted out of Kaniko's
-// RUN-layer cache. Pulled into a helper so both the dedup-hit and the
-// Job-driven metric callsites resolve it the same way -- read the CR's
-// spec.buildOptions.disableBuildLayerCache. Chart-level defaults are
-// intentionally ignored: this label tracks per-CR intent, not the
-// effective Kaniko args (which the chart can also gate via
-// kaniko.buildCache.enabled). For "did this build actually use the
-// layer cache" use a Kaniko-side metric, not this label.
-func buildLayerCacheDisabled(cr *omsv1alpha1.ImagePatch) bool {
-	return cr.Spec.BuildOptions != nil && boolPtrTrue(cr.Spec.BuildOptions.DisableBuildLayerCache)
+// buildLayerCacheHit reports whether the CR allowed Kaniko's RUN-layer
+// cache (i.e. did NOT set spec.buildOptions.disableBuildLayerCache).
+// Tracks per-CR intent rather than whether Kaniko actually pulled a
+// cached layer from the registry -- that needs a Kaniko-side metric we
+// don't have. Naming as "hit" lets the metric label read symmetrically
+// with buildCacheHit (the controller dedup short-circuit indicator).
+// Chart-level defaults (kaniko.buildCache.enabled) are intentionally
+// ignored here: this label is per-CR, not effective config.
+func buildLayerCacheHit(cr *omsv1alpha1.ImagePatch) bool {
+	return !(cr.Spec.BuildOptions != nil && boolPtrTrue(cr.Spec.BuildOptions.DisableBuildLayerCache))
+}
+
+// isCanary returns whether the CR was submitted by the chart's
+// healthcheck CronJob. Driven by the image-patcher.healthcheck/canary
+// label which the probe script stamps on every CR it creates.
+// Dashboards filter canary=false by default so the synthetic per-tick
+// load doesn't dominate production graphs.
+func isCanary(cr *omsv1alpha1.ImagePatch) bool {
+	return cr.Labels["image-patcher.healthcheck/canary"] == "true"
 }
 
 // jobFailureReason classifies a failed build into one of the bounded
