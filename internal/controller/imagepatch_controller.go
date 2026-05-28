@@ -127,19 +127,20 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// `fork/exec /bin/sh: exec format error` before the classifier
 	// could surface ImageOSNotSupported.
 	//
-	// Gated on r.Registry being non-nil (same gate dedup uses): no
-	// docker config mounted means we can't authenticate to private
-	// registries, and the build pulls under kaniko's own auth path
-	// anyway. RejectIfPlatformMismatch is fail-open on every error
-	// that isn't a confirmed mismatch, so a transient registry blip
-	// can never coerce an ImageOSNotSupported label.
+	// Uses an anonymous registry client (no docker-config auth) on
+	// the v1 "assume public registries" assumption. Private images
+	// 401, the function returns nil (fail-open), and kaniko handles
+	// the build under its own mounted credentials -- unchanged from
+	// the no-pre-flight world. Intentionally decoupled from r.Registry
+	// (the dedup short-circuit client) so toggling dedup doesn't
+	// silently disable pre-flight too.
 	//
 	// Sticky: a CR already labelled with a known terminal failure
 	// (this one or any other) is skipped -- otherwise a re-reconcile
 	// after the build Pod is GC'd would re-run inspect and possibly
 	// overwrite an accurate label with a fail-open nil.
-	if r.Registry != nil && !IsKnownFailureLabel(imagePatch.Status.Message) {
-		if err := r.Registry.RejectIfPlatformMismatch(ctx, imagePatch.Spec.BaseImage,
+	if !IsKnownFailureLabel(imagePatch.Status.Message) {
+		if err := registry.RejectIfPlatformMismatch(ctx, imagePatch.Spec.BaseImage,
 			defaultBuildOS, defaultBuildArch); err != nil {
 			l.Info("pre-flight rejected: base image does not include build target platform",
 				"image", imagePatch.Spec.BaseImage, "detail", err.Error())

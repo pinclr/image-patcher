@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -50,6 +51,12 @@ var ErrPlatformNotSupported = errors.New("ImageOSNotSupported")
 //     downstream log classifier handles whatever failure shape
 //     eventually surfaces.
 //
+// Standalone function (not a Client method) with anonymous keychain on
+// purpose: this is the v1 "assume public registries" pre-flight. Private
+// registries that require auth for reads will 401, fall under bucket 3,
+// and let kaniko handle the build with its own mounted credentials --
+// unchanged from the no-pre-flight world.
+//
 // Failure semantics mirror Exists / Retag: the only "loud" return is
 // the one the caller would otherwise turn into a user-visible rejection,
 // so a transient registry blip never causes a false ImageOSNotSupported
@@ -57,7 +64,7 @@ var ErrPlatformNotSupported = errors.New("ImageOSNotSupported")
 // InvalidImage downstream rather than catching them here, which is
 // the correct trade -- the gateway must never assert "your image is
 // broken" without proof.
-func (c *Client) RejectIfPlatformMismatch(ctx context.Context, ref, targetOS, targetArch string) error {
+func RejectIfPlatformMismatch(ctx context.Context, ref, targetOS, targetArch string) error {
 	parsed, err := name.ParseReference(ref)
 	if err != nil {
 		// Malformed refs fall through to the build, where kaniko's
@@ -69,7 +76,7 @@ func (c *Client) RejectIfPlatformMismatch(ctx context.Context, ref, targetOS, ta
 	}
 
 	desc, err := remote.Get(parsed,
-		remote.WithAuthFromKeychain(c.keychain),
+		remote.WithAuth(authn.Anonymous),
 		remote.WithContext(ctx),
 	)
 	if err != nil {

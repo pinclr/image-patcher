@@ -101,13 +101,17 @@ func pushIndex(t *testing.T, ref string, platforms [][2]string) {
 }
 
 func TestRejectIfPlatformMismatch(t *testing.T) {
-	c, host := newTestClient(t)
+	// Reuse the dedup test scaffold purely to spin up an httptest
+	// registry on a real port. The Client returned by newTestClient
+	// isn't used -- RejectIfPlatformMismatch is a package-level
+	// function with its own (anonymous) keychain.
+	_, host := newTestClient(t)
 	ctx := context.Background()
 
 	t.Run("single-platform linux/amd64 accepted", func(t *testing.T) {
 		ref := host + "/repo/match:latest"
 		pushPlatformImage(t, ref, "linux", "amd64")
-		if err := c.RejectIfPlatformMismatch(ctx, ref, "linux", "amd64"); err != nil {
+		if err := RejectIfPlatformMismatch(ctx, ref, "linux", "amd64"); err != nil {
 			t.Fatalf("expected nil, got %v", err)
 		}
 	})
@@ -115,7 +119,7 @@ func TestRejectIfPlatformMismatch(t *testing.T) {
 	t.Run("single-platform linux/arm64 rejected (the real-world luna mirror case)", func(t *testing.T) {
 		ref := host + "/repo/wrong-arch:latest"
 		pushPlatformImage(t, ref, "linux", "arm64")
-		err := c.RejectIfPlatformMismatch(ctx, ref, "linux", "amd64")
+		err := RejectIfPlatformMismatch(ctx, ref, "linux", "amd64")
 		if !errors.Is(err, ErrPlatformNotSupported) {
 			t.Fatalf("want ErrPlatformNotSupported, got %v", err)
 		}
@@ -132,7 +136,7 @@ func TestRejectIfPlatformMismatch(t *testing.T) {
 	t.Run("single-platform windows/amd64 rejected", func(t *testing.T) {
 		ref := host + "/repo/windows:latest"
 		pushPlatformImage(t, ref, "windows", "amd64")
-		err := c.RejectIfPlatformMismatch(ctx, ref, "linux", "amd64")
+		err := RejectIfPlatformMismatch(ctx, ref, "linux", "amd64")
 		if !errors.Is(err, ErrPlatformNotSupported) {
 			t.Fatalf("want ErrPlatformNotSupported, got %v", err)
 		}
@@ -147,7 +151,7 @@ func TestRejectIfPlatformMismatch(t *testing.T) {
 			{"linux", "amd64"},
 			{"linux", "arm64"},
 		})
-		if err := c.RejectIfPlatformMismatch(ctx, ref, "linux", "amd64"); err != nil {
+		if err := RejectIfPlatformMismatch(ctx, ref, "linux", "amd64"); err != nil {
 			t.Fatalf("expected nil, got %v", err)
 		}
 	})
@@ -158,7 +162,7 @@ func TestRejectIfPlatformMismatch(t *testing.T) {
 			{"linux", "arm64"},
 			{"linux", "arm"},
 		})
-		err := c.RejectIfPlatformMismatch(ctx, ref, "linux", "amd64")
+		err := RejectIfPlatformMismatch(ctx, ref, "linux", "amd64")
 		if !errors.Is(err, ErrPlatformNotSupported) {
 			t.Fatalf("want ErrPlatformNotSupported, got %v", err)
 		}
@@ -172,7 +176,7 @@ func TestRejectIfPlatformMismatch(t *testing.T) {
 		// have typoed the tag; image-patcher's downstream classifier
 		// will surface InvalidImage on the build path. We must NOT
 		// pre-emptively label ImageOSNotSupported here.
-		err := c.RejectIfPlatformMismatch(ctx, host+"/repo/does-not-exist:latest", "linux", "amd64")
+		err := RejectIfPlatformMismatch(ctx, host+"/repo/does-not-exist:latest", "linux", "amd64")
 		if err != nil {
 			t.Errorf("missing image should fail-open with nil, got %v", err)
 		}
@@ -184,7 +188,7 @@ func TestRejectIfPlatformMismatch(t *testing.T) {
 		// flaky registry from blocking otherwise-valid builds -- the
 		// downstream Job will hit the same registry and surface its
 		// own error.
-		err := c.RejectIfPlatformMismatch(ctx, "127.0.0.1:1/nonexistent:latest", "linux", "amd64")
+		err := RejectIfPlatformMismatch(ctx, "127.0.0.1:1/nonexistent:latest", "linux", "amd64")
 		if err != nil {
 			t.Errorf("unreachable registry should fail-open with nil, got %v", err)
 		}
@@ -194,7 +198,7 @@ func TestRejectIfPlatformMismatch(t *testing.T) {
 		// Pre-flight isn't the right layer to reject malformed refs:
 		// kaniko's own parser would catch them on the build path and
 		// the error message there is more authoritative. Same fail-open.
-		err := c.RejectIfPlatformMismatch(ctx, ":: not a valid ref ::", "linux", "amd64")
+		err := RejectIfPlatformMismatch(ctx, ":: not a valid ref ::", "linux", "amd64")
 		if err != nil {
 			t.Errorf("malformed ref should fail-open with nil, got %v", err)
 		}
