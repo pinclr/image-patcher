@@ -120,40 +120,6 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// Pre-flight platform inspect. Rejects synchronously (no Job,
-	// no ConfigMap) when the base image's registry manifest doesn't
-	// include linux/amd64 -- the case that previously had to wait
-	// for kaniko to spin up, pull the image, and fail with
-	// `fork/exec /bin/sh: exec format error` before the classifier
-	// could surface ImageOSNotSupported.
-	//
-	// Uses an anonymous registry client (no docker-config auth) on
-	// the v1 "assume public registries" assumption. Private images
-	// 401, the function returns nil (fail-open), and kaniko handles
-	// the build under its own mounted credentials -- unchanged from
-	// the no-pre-flight world. Intentionally decoupled from r.Registry
-	// (the dedup short-circuit client) so toggling dedup doesn't
-	// silently disable pre-flight too.
-	//
-	// Sticky: a CR already labelled with a known terminal failure
-	// (this one or any other) is skipped -- otherwise a re-reconcile
-	// after the build Pod is GC'd would re-run inspect and possibly
-	// overwrite an accurate label with a fail-open nil.
-	if !IsKnownFailureLabel(imagePatch.Status.Message) {
-		if err := registry.RejectIfPlatformMismatch(ctx, imagePatch.Spec.BaseImage,
-			defaultBuildOS, defaultBuildArch); err != nil {
-			l.Info("pre-flight rejected: base image does not include build target platform",
-				"image", imagePatch.Spec.BaseImage, "detail", err.Error())
-			imagePatch.Status.Phase = "Failed"
-			imagePatch.Status.Message = FailureLabelImageOSNotSupported
-			if updateErr := r.Status().Update(ctx, &imagePatch); updateErr != nil {
-				metrics.RecordReconcileFailure(metrics.ReasonStatusUpdate)
-				return ctrl.Result{}, updateErr
-			}
-			return ctrl.Result{}, nil
-		}
-	}
-
 	jobName := imagePatch.Name + "-build-job"
 	cmName := imagePatch.Name + "-dockerfile"
 	buildNs := r.buildNamespaceFor(&imagePatch)
@@ -162,7 +128,36 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	var job batchv1.Job
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: buildNs}, &job)
 	if err == nil {
+		// Job already exists. Whatever decision allowed it (a prior
+		// pre-flight pass, or a controller version that didn't run
+		// pre-flight at all) is locked in -- classify via the Job's
+		// status. Do NOT re-run pre-flight here; it would otherwise
+		// fight handleExistingJob's "Build is running" message update
+		// every reconcile and re-bill the registry for nothing.
 		return r.handleExistingJob(ctx, &imagePatch, &job)
+	}
+	if !errors.IsNotFound(err) {
+		metrics.RecordReconcileFailure(metrics.ReasonGetJob)
+		return ctrl.Result{}, err
+	}
+
+	// No Job yet -- pre-flight is the gate to creating one.
+	//   - reject:    mark Failed/ImageOSNotSupported, no Job, no ConfigMap
+	//   - accept:    drop through to Job/ConfigMap creation
+	//   - fail-open: same as accept (registry blip / private image
+	//                we can't read with anonymous auth -- kaniko handles
+	//                via its own mounted credentials)
+	if perr := registry.RejectIfPlatformMismatch(ctx, imagePatch.Spec.BaseImage,
+		defaultBuildOS, defaultBuildArch); perr != nil {
+		l.Info("pre-flight rejected: base image does not include build target platform",
+			"image", imagePatch.Spec.BaseImage, "detail", perr.Error())
+		imagePatch.Status.Phase = "Failed"
+		imagePatch.Status.Message = FailureLabelImageOSNotSupported
+		if updateErr := r.Status().Update(ctx, &imagePatch); updateErr != nil {
+			metrics.RecordReconcileFailure(metrics.ReasonStatusUpdate)
+			return ctrl.Result{}, updateErr
+		}
+		return ctrl.Result{}, nil
 	}
 
 	if errors.IsNotFound(err) {
