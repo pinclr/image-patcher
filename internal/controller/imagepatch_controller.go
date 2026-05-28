@@ -338,7 +338,7 @@ func (r *ImagePatchReconciler) tryDedupShortCircuit(ctx context.Context, cr *oms
 		l.Error(err, "dedup hit: status update failed; will retry", "dedupRef", dedupRef)
 		return false, err
 	}
-	metrics.RecordBuildResult(metrics.ResultSucceeded, destination, metrics.FailureReasonNone,
+	metrics.RecordBuildResult(metrics.ResultSucceeded, destination, cr.Spec.BaseImage, metrics.FailureReasonNone,
 		true /*buildCacheHit*/, buildLayerCacheHit(cr), isCanary(cr),
 		cr.CreationTimestamp.Time, time.Time{} /*no Job*/, time.Time{})
 	l.Info("dedup hit: skipped build", "imagepatch", cr.Name, "dedupRef", dedupRef, "destination", destination, "specHash", specHash)
@@ -369,7 +369,7 @@ func recordTerminalBuild(cr *omsv1alpha1.ImagePatch, newPhase, targetImage strin
 	if job.Status.CompletionTime != nil {
 		end = job.Status.CompletionTime.Time
 	}
-	metrics.RecordBuildResult(result, targetImage, failureReason,
+	metrics.RecordBuildResult(result, targetImage, cr.Spec.BaseImage, failureReason,
 		false /*buildCacheHit*/, buildLayerCacheHit(cr), isCanary(cr),
 		cr.CreationTimestamp.Time, start, end)
 }

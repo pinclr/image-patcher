@@ -74,29 +74,29 @@ var (
 		prometheus.CounterOpts{
 			Namespace: namespace,
 			Name:      "builds_total",
-			Help:      "Image builds that reached a terminal state, by result, target image, failure reason (none for successes), whether the build was short-circuited via content-addressed dedup (build_cache_hit=true means no Kaniko Job ran), whether the CR opted out of Kaniko's RUN-layer cache (build_layer_cache_hit), and whether the CR is a healthcheck canary (canary=true; sourced from the image-patcher.healthcheck/canary CR label, lets dashboards filter the synthetic load out of production graphs).",
+			Help:      "Image builds that reached a terminal state. Labels: result, registry/image (target), base_image (CR spec.baseImage -- lets dashboards split by Ubuntu version etc.), failure_reason (none for successes), build_cache_hit (controller dedup short-circuit), build_layer_cache_hit (CR allowed Kaniko --cache=true), canary (sourced from image-patcher.healthcheck/canary CR label).",
 		},
-		[]string{"result", "registry", "image", "failure_reason", "build_cache_hit", "build_layer_cache_hit", "canary"},
+		[]string{"result", "registry", "image", "base_image", "failure_reason", "build_cache_hit", "build_layer_cache_hit", "canary"},
 	)
 
 	buildDurationSeconds = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: namespace,
 			Name:      "build_duration_seconds",
-			Help:      "Wall time from Kaniko Job startTime to the terminal transition observed by the reconciler. Excludes reconciler queue + Pod scheduling time; for the full CR-creation-to-terminal duration use image_patcher_e2e_seconds.",
+			Help:      "Wall time from Kaniko Job startTime to the terminal transition observed by the reconciler. Excludes reconciler queue + Pod scheduling time; for the full CR-creation-to-terminal duration use image_patcher_e2e_seconds. base_image label lets dashboards spot which base is regressing.",
 			Buckets:   buildDurationBuckets,
 		},
-		[]string{"result", "registry", "image", "build_layer_cache_hit", "canary"},
+		[]string{"result", "registry", "image", "base_image", "build_layer_cache_hit", "canary"},
 	)
 
 	e2eSeconds = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: namespace,
 			Name:      "e2e_seconds",
-			Help:      "Wall time from ImagePatch CR creation timestamp to the terminal transition observed by the reconciler. Includes reconciler queue wait, ConfigMap+Job creation, Pod scheduling, Kaniko build, push, and Status.Update. Always observed -- including dedup hits, which typically land in the smallest bucket (registry HEAD+PUT only).",
+			Help:      "Wall time from ImagePatch CR creation timestamp to the terminal transition observed by the reconciler. Includes reconciler queue wait, ConfigMap+Job creation, Pod scheduling, Kaniko build, push, and Status.Update. Always observed -- including build cache hits (which record 0 for build_duration_seconds but a real value here).",
 			Buckets:   buildDurationBuckets,
 		},
-		[]string{"result", "registry", "image", "build_cache_hit", "build_layer_cache_hit", "canary"},
+		[]string{"result", "registry", "image", "base_image", "build_cache_hit", "build_layer_cache_hit", "canary"},
 	)
 
 	reconcileFailuresTotal = prometheus.NewCounterVec(
@@ -162,7 +162,7 @@ func init() {
 // canary become labels for dashboard splits / canary exclusion.
 // buildLayerCacheHit is true when the CR allowed Kaniko's --cache=true
 // (i.e. did NOT set spec.buildOptions.disableBuildLayerCache).
-func RecordBuildResult(result, targetImage, failureReason string, buildCacheHit, buildLayerCacheHit, canary bool, crCreated, jobStarted, jobEnded time.Time) {
+func RecordBuildResult(result, targetImage, baseImage, failureReason string, buildCacheHit, buildLayerCacheHit, canary bool, crCreated, jobStarted, jobEnded time.Time) {
 	registry, image := SplitImageRef(targetImage)
 	bcacheLabel := strconv.FormatBool(buildCacheHit)
 	blayerLabel := strconv.FormatBool(buildLayerCacheHit)
@@ -173,6 +173,7 @@ func RecordBuildResult(result, targetImage, failureReason string, buildCacheHit,
 		"result":                result,
 		"registry":              registry,
 		"image":                 image,
+		"base_image":            baseImage,
 		"failure_reason":        failureReason,
 		"build_cache_hit":       bcacheLabel,
 		"build_layer_cache_hit": blayerLabel,
@@ -184,6 +185,7 @@ func RecordBuildResult(result, targetImage, failureReason string, buildCacheHit,
 			"result":                result,
 			"registry":              registry,
 			"image":                 image,
+			"base_image":            baseImage,
 			"build_cache_hit":       bcacheLabel,
 			"build_layer_cache_hit": blayerLabel,
 			"canary":                canaryLabel,
@@ -206,6 +208,7 @@ func RecordBuildResult(result, targetImage, failureReason string, buildCacheHit,
 			"result":                result,
 			"registry":              registry,
 			"image":                 image,
+			"base_image":            baseImage,
 			"build_layer_cache_hit": blayerLabel,
 			"canary":                canaryLabel,
 		}).Observe(0)
@@ -218,6 +221,7 @@ func RecordBuildResult(result, targetImage, failureReason string, buildCacheHit,
 			"result":                result,
 			"registry":              registry,
 			"image":                 image,
+			"base_image":            baseImage,
 			"build_layer_cache_hit": blayerLabel,
 			"canary":                canaryLabel,
 		}).Observe(end.Sub(jobStarted).Seconds())
