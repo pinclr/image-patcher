@@ -120,33 +120,21 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	jobName := imagePatch.Name + "-build-job"
-	cmName := imagePatch.Name + "-dockerfile"
-	buildNs := r.buildNamespaceFor(&imagePatch)
-	crossNamespace := buildNs != imagePatch.Namespace
-
-	var job batchv1.Job
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: buildNs}, &job)
-	if err == nil {
-		// Job already exists. Whatever decision allowed it (a prior
-		// pre-flight pass, or a controller version that didn't run
-		// pre-flight at all) is locked in -- classify via the Job's
-		// status. Do NOT re-run pre-flight here; it would otherwise
-		// fight handleExistingJob's "Build is running" message update
-		// every reconcile and re-bill the registry for nothing.
-		return r.handleExistingJob(ctx, &imagePatch, &job)
-	}
-	if !errors.IsNotFound(err) {
-		metrics.RecordReconcileFailure(metrics.ReasonGetJob)
-		return ctrl.Result{}, err
-	}
-
-	// No Job yet -- pre-flight is the gate to creating one.
-	//   - reject:    mark Failed/ImageOSNotSupported, no Job, no ConfigMap
-	//   - accept:    drop through to Job/ConfigMap creation
-	//   - fail-open: same as accept (registry blip / private image
-	//                we can't read with anonymous auth -- kaniko handles
-	//                via its own mounted credentials)
+	// Pre-flight platform inspect -- runs first, before any other check.
+	// "Should this image be patched?" is independent of "where is the
+	// build job?", and answering it up front saves a kaniko spin-up for
+	// the classifiable-reject cases.
+	//
+	//   - reject:    set Failed/ImageOSNotSupported, return (no Job is
+	//                created; any in-flight one is left alone -- kaniko
+	//                will exit shortly with the same failure and the
+	//                CR's status is already correct from the user's
+	//                perspective).
+	//   - accept:    fall through to the existing Job find-or-create.
+	//   - fail-open: same as accept. Registry blip / private image we
+	//                can't read with anonymous auth -- kaniko handles
+	//                the build under its own mounted credentials,
+	//                unchanged from the no-pre-flight world.
 	if perr := registry.RejectIfPlatformMismatch(ctx, imagePatch.Spec.BaseImage,
 		defaultBuildOS, defaultBuildArch); perr != nil {
 		l.Info("pre-flight rejected: base image does not include build target platform",
@@ -158,6 +146,17 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			return ctrl.Result{}, updateErr
 		}
 		return ctrl.Result{}, nil
+	}
+
+	jobName := imagePatch.Name + "-build-job"
+	cmName := imagePatch.Name + "-dockerfile"
+	buildNs := r.buildNamespaceFor(&imagePatch)
+	crossNamespace := buildNs != imagePatch.Namespace
+
+	var job batchv1.Job
+	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: buildNs}, &job)
+	if err == nil {
+		return r.handleExistingJob(ctx, &imagePatch, &job)
 	}
 
 	if errors.IsNotFound(err) {
