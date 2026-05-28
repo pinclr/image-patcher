@@ -120,6 +120,39 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	// Pre-flight platform inspect. Rejects synchronously (no Job,
+	// no ConfigMap) when the base image's registry manifest doesn't
+	// include linux/amd64 -- the case that previously had to wait
+	// for kaniko to spin up, pull the image, and fail with
+	// `fork/exec /bin/sh: exec format error` before the classifier
+	// could surface ImageOSNotSupported.
+	//
+	// Gated on r.Registry being non-nil (same gate dedup uses): no
+	// docker config mounted means we can't authenticate to private
+	// registries, and the build pulls under kaniko's own auth path
+	// anyway. RejectIfPlatformMismatch is fail-open on every error
+	// that isn't a confirmed mismatch, so a transient registry blip
+	// can never coerce an ImageOSNotSupported label.
+	//
+	// Sticky: a CR already labelled with a known terminal failure
+	// (this one or any other) is skipped -- otherwise a re-reconcile
+	// after the build Pod is GC'd would re-run inspect and possibly
+	// overwrite an accurate label with a fail-open nil.
+	if r.Registry != nil && !IsKnownFailureLabel(imagePatch.Status.Message) {
+		if err := r.Registry.RejectIfPlatformMismatch(ctx, imagePatch.Spec.BaseImage,
+			defaultBuildOS, defaultBuildArch); err != nil {
+			l.Info("pre-flight rejected: base image does not include build target platform",
+				"image", imagePatch.Spec.BaseImage, "detail", err.Error())
+			imagePatch.Status.Phase = "Failed"
+			imagePatch.Status.Message = FailureLabelImageOSNotSupported
+			if updateErr := r.Status().Update(ctx, &imagePatch); updateErr != nil {
+				metrics.RecordReconcileFailure(metrics.ReasonStatusUpdate)
+				return ctrl.Result{}, updateErr
+			}
+			return ctrl.Result{}, nil
+		}
+	}
+
 	jobName := imagePatch.Name + "-build-job"
 	cmName := imagePatch.Name + "-dockerfile"
 	buildNs := r.buildNamespaceFor(&imagePatch)
@@ -224,6 +257,16 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 // the workqueue. Same cadence applies to the Pending case (Job created,
 // no status counters yet).
 const runningPhaseRequeueAfter = 15 * time.Second
+
+// defaultBuildOS / defaultBuildArch are the (os, arch) the pre-flight
+// platform inspect rejects mismatches against. Hard-coded today
+// because every build runner the project ships with is amd64; promote
+// to env-overridable (KANIKO_BUILD_PLATFORM or similar) the moment a
+// non-amd64 build pool exists.
+const (
+	defaultBuildOS   = "linux"
+	defaultBuildArch = "amd64"
+)
 
 // handleExistingJob handles the case when the Job already exists
 func (r *ImagePatchReconciler) handleExistingJob(ctx context.Context, imagePatch *omsv1alpha1.ImagePatch, job *batchv1.Job) (ctrl.Result, error) {
