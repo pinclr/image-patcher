@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - dev/xy/**
+      - fix/xy/**
   workflow_dispatch:
 
 # Only one release at a time per ref; cancel any in-flight run so the latest commit wins.

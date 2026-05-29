@@ -120,6 +120,34 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	// Pre-flight platform inspect -- runs first, before any other check.
+	// "Should this image be patched?" is independent of "where is the
+	// build job?", and answering it up front saves a kaniko spin-up for
+	// the classifiable-reject cases.
+	//
+	//   - reject:    set Failed/ImageOSNotSupported, return (no Job is
+	//                created; any in-flight one is left alone -- kaniko
+	//                will exit shortly with the same failure and the
+	//                CR's status is already correct from the user's
+	//                perspective).
+	//   - accept:    fall through to the existing Job find-or-create.
+	//   - fail-open: same as accept. Registry blip / private image we
+	//                can't read with anonymous auth -- kaniko handles
+	//                the build under its own mounted credentials,
+	//                unchanged from the no-pre-flight world.
+	if perr := registry.RejectIfPlatformMismatch(ctx, imagePatch.Spec.BaseImage,
+		defaultBuildOS, defaultBuildArch); perr != nil {
+		l.Info("pre-flight rejected: base image does not include build target platform",
+			"image", imagePatch.Spec.BaseImage, "detail", perr.Error())
+		imagePatch.Status.Phase = "Failed"
+		imagePatch.Status.Message = FailureLabelImageOSNotSupported
+		if updateErr := r.Status().Update(ctx, &imagePatch); updateErr != nil {
+			metrics.RecordReconcileFailure(metrics.ReasonStatusUpdate)
+			return ctrl.Result{}, updateErr
+		}
+		return ctrl.Result{}, nil
+	}
+
 	jobName := imagePatch.Name + "-build-job"
 	cmName := imagePatch.Name + "-dockerfile"
 	buildNs := r.buildNamespaceFor(&imagePatch)
@@ -224,6 +252,16 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 // the workqueue. Same cadence applies to the Pending case (Job created,
 // no status counters yet).
 const runningPhaseRequeueAfter = 15 * time.Second
+
+// defaultBuildOS / defaultBuildArch are the (os, arch) the pre-flight
+// platform inspect rejects mismatches against. Hard-coded today
+// because every build runner the project ships with is amd64; promote
+// to env-overridable (KANIKO_BUILD_PLATFORM or similar) the moment a
+// non-amd64 build pool exists.
+const (
+	defaultBuildOS   = "linux"
+	defaultBuildArch = "amd64"
+)
 
 // handleExistingJob handles the case when the Job already exists
 func (r *ImagePatchReconciler) handleExistingJob(ctx context.Context, imagePatch *omsv1alpha1.ImagePatch, job *batchv1.Job) (ctrl.Result, error) {
@@ -566,6 +604,44 @@ func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destin
 	}
 }
 
+// imageOSCheckCommand is emitted as the VERY FIRST RUN in every generated
+// Dockerfile so a non-Ubuntu (or unsupported-Ubuntu) base fails with a
+// classifiable signal instead of producing a downstream "VERSION_CODENAME
+// is empty" / "apt-get not found" error that the log classifier can't pin
+// on the user.
+//
+// Signal is the exit code 42 (not a printed marker): kaniko echoes every
+// RUN's command body verbatim into INFO log lines (`No cached layer
+// found for cmd RUN ...`, `RUN ...`, `Args: [-c ...]`, `Running:
+// [/bin/sh -c ...]`), so anything we echo here would also appear in
+// every successful build's logs and false-trigger the classifier.
+// Instead the guard exits 42 silently, and classify.go matches the
+// `waiting for process to exit: exit status 42` line that kaniko itself
+// emits on RUN failure -- structural emission, not a substring of the
+// command body. Trade-off: `kubectl logs <build-pod>` no longer shows
+// which branch fired (ID vs. VERSION_ID, with the offending value);
+// the user-facing label is just "ImageOSNotSupported" and the operator
+// can re-check the base image's /etc/os-release manually.
+//
+// Single-line shell on purpose: the run line goes straight into a
+// Dockerfile `RUN`, so an embedded newline would either need backslash
+// continuation (verbose) or break case/esac.
+//
+// Supported Ubuntu set: 20.04 / 22.04 / 24.04 / 26.04. Add new LTS
+// versions here as we adopt them.
+//
+// image-patcher is fully Ubuntu-coupled today (APT block uses apt-get
+// and $VERSION_CODENAME from /etc/os-release), so emitting this check
+// unconditionally doesn't reduce capability -- it just surfaces an
+// assumption that was already baked in.
+const imageOSCheckCommand = `[ -r /etc/os-release ] || exit 42; ` +
+	`. /etc/os-release; ` +
+	`[ "$ID" = "ubuntu" ] || exit 42; ` +
+	`case "$VERSION_ID" in ` +
+	`20.04|22.04|24.04|26.04) ;; ` +
+	`*) exit 42 ;; ` +
+	`esac`
+
 // GenerateDockerfile generates a Dockerfile from the ImagePatch CR spec.
 // GenerateDockerfile generates a Dockerfile from the ImagePatch CR spec.
 func GenerateDockerfile(cr *omsv1alpha1.ImagePatch) string {
@@ -584,6 +660,16 @@ func GenerateDockerfile(cr *omsv1alpha1.ImagePatch) string {
 	// base image set SHELL to something kaniko can't resolve via PATH (e.g.
 	// ["sh", "-lc"] on a minimal image without /bin in PATH).
 	sb.WriteString("SHELL [\"/bin/sh\", \"-c\"]\n\n")
+
+	// Image-OS guard. Must be the first RUN -- before APT mirror,
+	// COPY --from, or any user-defined shell step -- so that
+	// non-Ubuntu / unsupported-Ubuntu bases fail with the
+	// "ImageOSNotSupported:" marker rather than producing a downstream
+	// "VERSION_CODENAME is empty" / "apt-get not found" error the
+	// log classifier can't pin on the user. See imageOSCheckCommand
+	// above for the supported-version contract and case-sensitivity
+	// rationale.
+	sb.WriteString("RUN " + imageOSCheckCommand + "\n\n")
 
 	// COPY --from - pull files from the multi-stage sources declared at
 	// the top of the file. Emitted immediately after the base FROM so the
@@ -627,8 +713,12 @@ func GenerateDockerfile(cr *omsv1alpha1.ImagePatch) string {
 	// base image and not what aptConfig.mirror is replacing.
 	if cr.Spec.APT != nil && cr.Spec.APT.Mirror != "" {
 		mirror := cr.Spec.APT.Mirror
+		// printf, not echo: /bin/sh is dash and POSIX echo writes `\n`
+		// literally, which collapses sources.list into one line and makes
+		// apt parse junk components like `multiverse\ndeb`. printf always
+		// interprets `\n`.
 		sb.WriteString("RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources && \\\n")
-		sb.WriteString(fmt.Sprintf("    . /etc/os-release && echo \"deb %s $VERSION_CODENAME main restricted universe multiverse\\n\\\n", mirror))
+		sb.WriteString(fmt.Sprintf("    . /etc/os-release && printf \"deb %s $VERSION_CODENAME main restricted universe multiverse\\n\\\n", mirror))
 		for _, suffix := range []string{"-updates", "-security", "-backports"} {
 			sb.WriteString(fmt.Sprintf("deb %s $VERSION_CODENAME%s main restricted universe multiverse\\n\\\n", mirror, suffix))
 		}
