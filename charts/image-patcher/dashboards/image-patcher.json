@@ -3,7 +3,10 @@
     "list": [
       {
         "builtIn": 1,
-        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
         "enable": true,
         "hide": true,
         "iconColor": "rgba(0, 211, 255, 1)",
@@ -24,7 +27,12 @@
       "id": 100,
       "title": "Build overview",
       "collapsed": false,
-      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
       "panels": []
     },
     {
@@ -32,38 +40,83 @@
       "id": 1,
       "title": "Builds over time",
       "description": "Count of terminal builds per time bucket, stacked by result. Use `increase()` rather than rate so low-traffic clusters (canary-dominant) still show as integer bars. Apply $canary / $build_cache_hit / $layer_cache filters to scope what's counted.",
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 1},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "custom": {
             "drawStyle": "bars",
-            "stacking": {"mode": "normal", "group": "A"},
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
             "fillOpacity": 80,
             "lineWidth": 1
           },
-          "color": {"mode": "palette-classic"}
+          "color": {
+            "mode": "palette-classic"
+          }
         },
         "overrides": [
           {
-            "matcher": {"id": "byName", "options": "failed"},
-            "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]
+            "matcher": {
+              "id": "byName",
+              "options": "failed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
           },
           {
-            "matcher": {"id": "byName", "options": "succeeded"},
-            "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]
+            "matcher": {
+              "id": "byName",
+              "options": "succeeded"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
           }
         ]
       },
       "options": {
-        "legend": {"showLegend": true, "displayMode": "list", "placement": "bottom"},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
           "expr": "sum by (result) (increase(image_patcher_builds_total{build_cache_hit=~\"$build_cache_hit\",build_layer_cache_hit=~\"$layer_cache\",canary=~\"$canary\"}[$__rate_interval]))",
           "legendFormat": "{{result}}"
         }
@@ -74,8 +127,16 @@
       "id": 2,
       "title": "Success rate (24h)",
       "description": "succeeded / total over the last 24h.",
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 1},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
@@ -84,9 +145,18 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "red", "value": null},
-              {"color": "orange", "value": 0.9},
-              {"color": "green", "value": 0.98}
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.9
+              },
+              {
+                "color": "green",
+                "value": 0.98
+              }
             ]
           }
         }
@@ -94,13 +164,22 @@
       "options": {
         "colorMode": "background",
         "graphMode": "area",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto"
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
           "expr": "sum(rate(image_patcher_builds_total{result=\"succeeded\",build_cache_hit=~\"$build_cache_hit\",build_layer_cache_hit=~\"$layer_cache\",canary=~\"$canary\"}[24h])) / clamp_min(sum(rate(image_patcher_builds_total{build_cache_hit=~\"$build_cache_hit\",build_layer_cache_hit=~\"$layer_cache\",canary=~\"$canary\"}[24h])), 1e-9)"
         }
       ]
@@ -110,23 +189,43 @@
       "id": 3,
       "title": "Total builds (all-time, this controller)",
       "description": "Counter resets when the controller pod restarts -- use rate() for trend.",
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 1},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "color": {"mode": "fixed", "fixedColor": "blue"}
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
         }
       },
       "options": {
         "colorMode": "value",
         "graphMode": "area",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
           "expr": "sum(image_patcher_builds_total{build_cache_hit=~\"$build_cache_hit\",build_layer_cache_hit=~\"$layer_cache\",canary=~\"$canary\"})"
         }
       ]
@@ -135,23 +234,42 @@
       "type": "bargauge",
       "id": 4,
       "title": "Top images by build count",
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 4, "w": 12, "x": 12, "y": 5},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "color": {"mode": "continuous-GrYlRd"}
+          "color": {
+            "mode": "continuous-GrYlRd"
+          }
         }
       },
       "options": {
         "displayMode": "gradient",
         "orientation": "horizontal",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
           "expr": "topk(10, sum by (image) (image_patcher_builds_total{build_cache_hit=~\"$build_cache_hit\",build_layer_cache_hit=~\"$layer_cache\",canary=~\"$canary\"}))",
           "legendFormat": "{{image}}",
           "instant": true
@@ -163,7 +281,12 @@
       "id": 101,
       "title": "Build latency",
       "collapsed": false,
-      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 9},
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
       "panels": []
     },
     {
@@ -171,28 +294,56 @@
       "id": 5,
       "title": "Build vs E2E duration per build",
       "description": "Two lines per bucket: average build_duration_seconds (Kaniko Job wall time, dedup hits excluded) and average e2e_seconds (CR creation -> terminal, includes reconciler queue and Pod scheduling, dedup hits included). At low traffic each bucket holds 0-1 builds so the average IS the per-build duration. Apply $canary / $build_cache_hit / $layer_cache to scope.",
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 10},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 10
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "s",
-          "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "always"}
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "always"
+          }
         }
       },
       "options": {
-        "legend": {"showLegend": true, "displayMode": "table", "calcs": ["lastNotNull", "max"]},
-        "tooltip": {"mode": "multi"}
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
           "expr": "rate(image_patcher_build_duration_seconds_sum{build_layer_cache_hit=~\"$layer_cache\",canary=~\"$canary\"}[$__rate_interval]) / rate(image_patcher_build_duration_seconds_count{build_layer_cache_hit=~\"$layer_cache\",canary=~\"$canary\"}[$__rate_interval])",
           "legendFormat": "build (Kaniko)"
         },
         {
           "refId": "B",
-          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
           "expr": "rate(image_patcher_e2e_seconds_sum{build_cache_hit=~\"$build_cache_hit\",build_layer_cache_hit=~\"$layer_cache\",canary=~\"$canary\"}[$__rate_interval]) / rate(image_patcher_e2e_seconds_count{build_cache_hit=~\"$build_cache_hit\",build_layer_cache_hit=~\"$layer_cache\",canary=~\"$canary\"}[$__rate_interval])",
           "legendFormat": "e2e (CR creation -> terminal)"
         }
@@ -203,28 +354,55 @@
       "id": 102,
       "title": "Controller health",
       "collapsed": false,
-      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 18},
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
       "panels": []
     },
     {
       "type": "timeseries",
       "id": 7,
       "title": "Reconcile failures by reason",
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 19},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 19
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "cpm",
-          "custom": {"drawStyle": "bars", "stacking": {"mode": "normal", "group": "A"}, "fillOpacity": 70}
+          "custom": {
+            "drawStyle": "bars",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "fillOpacity": 70
+          }
         }
       },
       "options": {
-        "legend": {"showLegend": true, "displayMode": "list", "placement": "bottom"}
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
           "expr": "sum by (reason) (rate(image_patcher_reconcile_failures_total[$__rate_interval])) * 60",
           "legendFormat": "{{reason}}"
         }
@@ -235,18 +413,37 @@
       "id": 8,
       "title": "Workqueue depth",
       "description": "Pending reconciles. Sustained non-zero = controller can't keep up.",
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 19},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 19
+      },
       "fieldConfig": {
-        "defaults": {"unit": "short", "custom": {"drawStyle": "line", "fillOpacity": 20}}
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20
+          }
+        }
       },
       "options": {
-        "legend": {"showLegend": false}
+        "legend": {
+          "showLegend": false
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
           "expr": "workqueue_depth{name=\"imagepatch\"}",
           "legendFormat": "depth"
         }
@@ -257,18 +454,33 @@
       "id": 9,
       "title": "Reconcile p95",
       "description": "controller-runtime reconcile loop duration p95. Excludes build wall time.",
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 19},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 19
+      },
       "fieldConfig": {
-        "defaults": {"unit": "s"}
+        "defaults": {
+          "unit": "s"
+        }
       },
       "options": {
-        "legend": {"showLegend": false}
+        "legend": {
+          "showLegend": false
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
           "expr": "histogram_quantile(0.95, sum by (le) (rate(controller_runtime_reconcile_time_seconds_bucket{controller=\"imagepatch\"}[$__rate_interval])))",
           "legendFormat": "p95"
         }
@@ -279,7 +491,12 @@
       "id": 104,
       "title": "In flight & failure breakdown",
       "collapsed": false,
-      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 27},
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 27
+      },
       "panels": []
     },
     {
@@ -287,18 +504,37 @@
       "id": 13,
       "title": "Active builds",
       "description": "ImagePatch CRs currently in Phase=Running. Refreshed every 30s by the in-process phase aggregator.",
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 28},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 28
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "color": {"mode": "thresholds"},
+          "color": {
+            "mode": "thresholds"
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "blue", "value": null},
-              {"color": "yellow", "value": 5},
-              {"color": "orange", "value": 10}
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 5
+              },
+              {
+                "color": "orange",
+                "value": 10
+              }
             ]
           }
         }
@@ -306,12 +542,21 @@
       "options": {
         "colorMode": "value",
         "graphMode": "area",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
           "expr": "image_patcher_active_builds"
         }
       ]
@@ -321,31 +566,118 @@
       "id": 14,
       "title": "ImagePatches by phase",
       "description": "Snapshot of all ImagePatch CRs grouped by Status.Phase.",
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 8, "w": 10, "x": 6, "y": 28},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 10,
+        "x": 6,
+        "y": 28
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "color": {"mode": "palette-classic"}
+          "color": {
+            "mode": "palette-classic"
+          }
         },
         "overrides": [
-          {"matcher": {"id": "byName", "options": "Succeeded"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]},
-          {"matcher": {"id": "byName", "options": "Failed"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]},
-          {"matcher": {"id": "byName", "options": "Running"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "blue"}}]},
-          {"matcher": {"id": "byName", "options": "Pending"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "yellow"}}]}
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Succeeded"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Failed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Running"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Pending"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                }
+              }
+            ]
+          }
         ]
       },
       "options": {
-        "displayLabels": ["name", "value"],
-        "legend": {"displayMode": "list", "placement": "right", "showLegend": true, "values": ["value"]},
+        "displayLabels": [
+          "name",
+          "value"
+        ],
+        "legend": {
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true,
+          "values": [
+            "value"
+          ]
+        },
         "pieType": "pie",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
-        "tooltip": {"mode": "single"}
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "tooltip": {
+          "mode": "single"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
           "expr": "image_patcher_imagepatches",
           "legendFormat": "{{phase}}",
           "instant": true
@@ -357,21 +689,43 @@
       "id": 15,
       "title": "Build failures by reason",
       "description": "Failed builds split by jobFailureReason: deadline_exceeded / backoff_limit_exceeded / build_error.",
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 28},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 28
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "cpm",
-          "custom": {"drawStyle": "bars", "stacking": {"mode": "normal", "group": "A"}, "fillOpacity": 80}
+          "custom": {
+            "drawStyle": "bars",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "fillOpacity": 80
+          }
         }
       },
       "options": {
-        "legend": {"showLegend": true, "displayMode": "list", "placement": "bottom"}
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
           "expr": "sum by (failure_reason) (increase(image_patcher_builds_total{result=\"failed\",build_cache_hit=~\"$build_cache_hit\",build_layer_cache_hit=~\"$layer_cache\",canary=~\"$canary\"}[$__rate_interval]))",
           "legendFormat": "{{failure_reason}}"
         }
@@ -380,11 +734,18 @@
   ],
   "refresh": "30s",
   "schemaVersion": 39,
-  "tags": ["image-patcher", "kaniko"],
+  "tags": [
+    "image-patcher",
+    "kaniko"
+  ],
   "templating": {
     "list": [
       {
-        "current": {"selected": false, "text": "Prometheus", "value": "Prometheus"},
+        "current": {
+          "selected": false,
+          "text": "Prometheus",
+          "value": "Prometheus"
+        },
         "hide": 0,
         "includeAll": false,
         "label": "Datasource",
@@ -402,9 +763,16 @@
         "name": "build_cache_hit",
         "label": "build_cache_hit",
         "type": "query",
-        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
         "query": "label_values(image_patcher_builds_total, build_cache_hit)",
-        "current": {"selected": false, "text": "All", "value": "$__all"},
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
         "includeAll": true,
         "multi": true,
         "refresh": 2,
@@ -414,9 +782,16 @@
         "name": "layer_cache",
         "label": "build_layer_cache_hit",
         "type": "query",
-        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
         "query": "label_values(image_patcher_builds_total, build_layer_cache_hit)",
-        "current": {"selected": false, "text": "All", "value": "$__all"},
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
         "includeAll": true,
         "multi": true,
         "refresh": 2,
@@ -426,9 +801,16 @@
         "name": "canary",
         "label": "canary (healthcheck synthetic load)",
         "type": "query",
-        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
         "query": "label_values(image_patcher_builds_total, canary)",
-        "current": {"selected": true, "text": "false", "value": "false"},
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
         "includeAll": true,
         "multi": true,
         "refresh": 2,
@@ -436,7 +818,10 @@
       }
     ]
   },
-  "time": {"from": "now-6h", "to": "now"},
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
   "timepicker": {},
   "timezone": "",
   "title": "Image Patcher",
