@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"io"
+	"regexp"
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -50,8 +51,31 @@ import (
 const (
 	FailureLabelInvalidImage            = "InvalidImage"
 	FailureLabelNetworkError            = "NetworkError"
+	FailureLabelImageOSNotSupported     = "ImageOSNotSupported"
 	FailureLabelControllerInternalError = "ControllerInternalError"
 )
+
+// imageOSExitMarker matches the kaniko terminal-error line emitted when
+// the check-os RUN (see imageOSCheckCommand in imagepatch_controller.go)
+// exits with our reserved sentinel code 42.
+//
+// We match on kaniko's structural emission rather than any string the
+// guard itself prints. kaniko echoes every RUN's command body verbatim
+// into FOUR INFO log lines (`No cached layer found for cmd RUN ...`,
+// `RUN ...`, `Args: [-c ...]`, `Running: [/bin/sh -c ...]`), so any
+// echo arg in the guard would show up in EVERY build's logs and
+// false-trigger the classifier even when check-os silently passed.
+// `waiting for process to exit: exit status 42` is written by kaniko's
+// own error path on RUN failure with that exit code, not from the
+// command body, so the same INFO-echo trap doesn't apply.
+//
+// 42 is reserved for image-patcher's check-os guard. apt-get returns
+// 100, curl 6/7/28, go binaries 0/1/2 -- 42 is essentially unused by
+// the toolchain we run during a patch build, so an `exit status 42`
+// line in the log can only have come from the guard.
+//
+// `\b` boundaries prevent matching "exit status 420" / "4242".
+var imageOSExitMarker = regexp.MustCompile(`waiting for process to exit: exit status 42\b`)
 
 // IsKnownFailureLabel reports whether s is one of the FailureLabel*
 // constants -- i.e. a message produced by a previous run of
@@ -85,6 +109,7 @@ func IsKnownFailureLabel(s string) bool {
 	switch s {
 	case FailureLabelInvalidImage,
 		FailureLabelNetworkError,
+		FailureLabelImageOSNotSupported,
 		FailureLabelControllerInternalError:
 		return true
 	}
@@ -160,21 +185,70 @@ func classifyBuildFailure(ctx context.Context, kube kubernetes.Interface, job *b
 // split out so the keyword matrix can be unit-tested without an API
 // server. Order matters:
 //
-//  1. InvalidImage first -- the union of "auth required at the registry"
-//     and "image doesn't exist at the registry". Both share keywords
-//     that registries often interchange (Harbor returns 404 for
-//     unauthorized requests to avoid info-leak), and the actionable
-//     advice is the same on either branch.
-//  2. NetworkError -- DNS / TCP / proxy failures. Kept distinct because
+//  1. ImageOSNotSupported, exit-42 form: kaniko's structural
+//     `waiting for process to exit: exit status 42` line, which only
+//     fires when our check-os guard's `exit 42` lands. Highest priority
+//     because 42 is reserved for this guard and the line is emitted by
+//     kaniko (not by our RUN body), so it can't false-trigger from
+//     kaniko's own RUN-body INFO echoes the way a printed marker would.
+//  2. ImageOSNotSupported, shell-missing form: kaniko's `fork/exec
+//     /bin/sh: no such file or directory` (and variants). Folded into
+//     the same label because the user-facing remediation is identical
+//     to (1) -- "feed us a base image with a working shell" -- and
+//     because for scratch / distroless bases the failure beats our
+//     prepended check-os to the punch: there's no /bin/sh, kaniko
+//     can't start the guard RUN at all, so we never see exit 42.
+//  3. InvalidImage -- union of "auth required at the registry" and
+//     "image doesn't exist at the registry". Both share keywords that
+//     registries often interchange (Harbor returns 404 for unauthorized
+//     requests to avoid info-leak), and the actionable advice is the
+//     same on either branch.
+//  4. NetworkError -- DNS / TCP / proxy failures. Kept distinct because
 //     these are operator-side (proxy / mirror config) and the user has
 //     no lever to pull. Order-wise: a rare Kaniko proxy 407 would
 //     contain "unauthorized" and get mis-classed as InvalidImage --
 //     acceptable, since in our environment 407 is essentially never
 //     seen and the surrounding signal is usually clear enough that the
 //     operator can still triage from the logs.
-//  3. Everything else -> ControllerInternalError.
+//  5. Everything else -> ControllerInternalError.
 func classifyLogTail(logTail string) string {
+	// Structural exit-code match (see imageOSExitMarker for why we
+	// match the kaniko terminal line rather than a substring of the
+	// guard's command body). Pre-empts every later rule so an
+	// unsupported-OS build doesn't get downgraded into "network error"
+	// by an incidental apt-mirror DNS failure that happened earlier
+	// in the same log tail.
+	if imageOSExitMarker.MatchString(logTail) {
+		return FailureLabelImageOSNotSupported
+	}
+
 	low := strings.ToLower(logTail)
+
+	// Shell-unrunnable form. GenerateDockerfile pins SHELL to /bin/sh
+	// (see imagepatch_controller.go), so every kaniko RUN goes through
+	// execve("/bin/sh", ...). Two specific errno strings -- and ONLY
+	// those two -- get classified as ImageOSNotSupported:
+	//
+	//   ENOENT  "...fork/exec /bin/sh: no such file or directory"
+	//           scratch / distroless (no /bin/sh) or its ELF loader /
+	//           shared libs are missing
+	//   ENOEXEC "...fork/exec /bin/sh: exec format error"
+	//           /bin/sh exists but is the wrong CPU architecture
+	//
+	// Other execve errnos (ENOMEM "cannot allocate memory" -- node OOM,
+	// E2BIG "argument list too long" -- our own bug, EACCES "permission
+	// denied", ...) fall through to ControllerInternalError on purpose:
+	// those are operator-side or controller-side problems, NOT
+	// "user's image is unpatchable", and conflating them would route a
+	// node-OOM page into the wrong remediation bucket.
+	//
+	// Goes before InvalidImage so it isn't shadowed by an incidental
+	// "unauthorized" elsewhere in the tail.
+	const forkExecPrefix = "failed to execute command: starting command: fork/exec /bin/sh: "
+	if strings.Contains(low, forkExecPrefix+"no such file or directory") ||
+		strings.Contains(low, forkExecPrefix+"exec format error") {
+		return FailureLabelImageOSNotSupported
+	}
 
 	// InvalidImage: registry returned either an auth challenge or a
 	// not-found for the requested repo/tag. We treat these as one bucket
