@@ -40,7 +40,7 @@ jobs:
           fi
           make docker-build docker-push \
             IMAGE_REGISTRY="$IMAGE_REGISTRY" \
-            CONTAINER_TOOL=docker
+            CONTAINER_TOOL="sudo docker"
 
       - uses: azure/setup-helm@v4
         with:
