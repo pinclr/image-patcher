@@ -31,7 +31,6 @@ jobs:
       # re-enable the steps below by flipping `if: false` to `if: true` or
       # removing the guard entirely.
       - name: build and push controller image
-        if: false
         env:
           IMAGE_REGISTRY: ${{ secrets.IMAGE_REGISTRY }}
         run: |
@@ -41,7 +40,7 @@ jobs:
           fi
           make docker-build docker-push \
             IMAGE_REGISTRY="$IMAGE_REGISTRY" \
-            CONTAINER_TOOL=podman
+            CONTAINER_TOOL="sudo docker"
 
       - uses: azure/setup-helm@v4
         with:
