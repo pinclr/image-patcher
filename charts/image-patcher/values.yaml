@@ -116,7 +116,7 @@ kaniko:
       ephemeral-storage: 30Gi
     limits: {}
 
-replicaCount: 1
+replicaCount: 3
 
 leaderElection:
   enabled: true
