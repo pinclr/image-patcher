@@ -33,11 +33,12 @@ const (
 	ResultSucceeded = "succeeded"
 	ResultFailed    = "failed"
 
-	ReasonConfigMapApply = "configmap_apply"
-	ReasonJobCreate      = "job_create"
-	ReasonStatusUpdate   = "status_update"
-	ReasonOwnerRef       = "owner_ref"
-	ReasonGetJob         = "get_job"
+	ReasonConfigMapApply  = "configmap_apply"
+	ReasonAuthSecretApply = "auth_secret_apply"
+	ReasonJobCreate       = "job_create"
+	ReasonStatusUpdate    = "status_update"
+	ReasonOwnerRef        = "owner_ref"
+	ReasonGetJob          = "get_job"
 
 	// FailureReason* are the bounded set of values for the failure_reason
 	// label on image_patcher_builds_total. Succeeded transitions always

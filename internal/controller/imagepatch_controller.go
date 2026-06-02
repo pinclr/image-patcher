@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -105,6 +106,7 @@ type ImagePatchReconciler struct {
 // +kubebuilder:rbac:groups=oms.ogpu.cloud,resources=imagepatches/finalizers,verbs=update
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list
 // +kubebuilder:rbac:groups="",resources=pods/log,verbs=get
 
@@ -121,6 +123,11 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	jobName := imagePatch.Name + "-build-job"
+	cmName := imagePatch.Name + "-dockerfile"
+	buildNs := r.buildNamespaceFor(&imagePatch)
+	crossNamespace := buildNs != imagePatch.Namespace
+
 	// Pre-flight platform inspect -- runs first, before any other check.
 	// "Should this image be patched?" is independent of "where is the
 	// build job?", and answering it up front saves a kaniko spin-up for
@@ -132,12 +139,18 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	//                CR's status is already correct from the user's
 	//                perspective).
 	//   - accept:    fall through to the existing Job find-or-create.
-	//   - fail-open: same as accept. Registry blip / private image we
-	//                can't read with anonymous auth -- kaniko handles
-	//                the build under its own mounted credentials,
-	//                unchanged from the no-pre-flight world.
+	//   - fail-open: same as accept. Registry blip / image we still can't
+	//                read -- kaniko handles the build under its own
+	//                mounted credentials, unchanged from the
+	//                no-pre-flight world.
+	//
+	// When the CR names a pullSecret we hand its docker config to the
+	// inspect so a private base image is read with real credentials
+	// instead of always failing open on a 401 -- otherwise the platform
+	// check would never run for exactly the private-registry case the
+	// pullSecret exists to serve.
 	if perr := registry.RejectIfPlatformMismatch(ctx, imagePatch.Spec.BaseImage,
-		defaultBuildOS, defaultBuildArch); perr != nil {
+		defaultBuildOS, defaultBuildArch, r.pullDockerConfig(ctx, &imagePatch, buildNs)); perr != nil {
 		l.Info("pre-flight rejected: base image does not include build target platform",
 			"image", imagePatch.Spec.BaseImage, "detail", perr.Error())
 		imagePatch.Status.Phase = "Failed"
@@ -148,11 +161,6 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 		return ctrl.Result{}, nil
 	}
-
-	jobName := imagePatch.Name + "-build-job"
-	cmName := imagePatch.Name + "-dockerfile"
-	buildNs := r.buildNamespaceFor(&imagePatch)
-	crossNamespace := buildNs != imagePatch.Namespace
 
 	var job batchv1.Job
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: buildNs}, &job)
@@ -169,6 +177,20 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		if err := r.createOrUpdateConfigMap(ctx, &imagePatch, cmName, buildNs, dockerfileContent); err != nil {
 			metrics.RecordReconcileFailure(metrics.ReasonConfigMapApply)
 			return ctrl.Result{}, err
+		}
+
+		// Resolve which Secret Kaniko mounts as its docker config. With no
+		// per-CR push/pull override we mount the chart-level default by name
+		// exactly as before (a missing default still surfaces at pod start,
+		// not here). When the CR sets either override, synthesize a per-CR
+		// Secret that layers pull creds over push creds and mount that.
+		authSecret := defaultDockerAuthSecret
+		if imagePatch.Spec.PushSecret != "" || imagePatch.Spec.PullSecret != "" {
+			authSecret = authSecretName(&imagePatch)
+			if err := r.createOrUpdateAuthSecret(ctx, &imagePatch, authSecret, buildNs); err != nil {
+				metrics.RecordReconcileFailure(metrics.ReasonAuthSecretApply)
+				return ctrl.Result{}, err
+			}
 		}
 
 		destination := r.resolveDestination(&imagePatch)
@@ -205,7 +227,7 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 
 		j := constructJob(&imagePatch, jobName, cmName, buildNs, destination, r.KanikoImage,
-			r.KanikoBuildCacheRepo, r.KanikoResources, buildOpts, dedupRef)
+			r.KanikoBuildCacheRepo, authSecret, r.KanikoResources, buildOpts, dedupRef)
 		// Owner references must live in the same namespace as the dependent
 		// (Kubernetes GC rejects cross-namespace ownership). When the build
 		// namespace matches the CR's namespace, set the controller reference
@@ -478,10 +500,10 @@ func (r *ImagePatchReconciler) buildNamespaceFor(_ *omsv1alpha1.ImagePatch) stri
 // traceability metadata even when they don't.
 func sourceLabels(cr *omsv1alpha1.ImagePatch) map[string]string {
 	return map[string]string{
-		"app":                          "imagepatch",
-		"imagepatch":                   cr.Name,
-		"imagepatch.source.name":       cr.Name,
-		"imagepatch.source.namespace":  cr.Namespace,
+		"app":                         "imagepatch",
+		"imagepatch":                  cr.Name,
+		"imagepatch.source.name":      cr.Name,
+		"imagepatch.source.namespace": cr.Namespace,
 	}
 }
 
@@ -529,7 +551,173 @@ func (r *ImagePatchReconciler) createOrUpdateConfigMap(ctx context.Context, imag
 	return nil
 }
 
-func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destination, kanikoImage, buildCacheRepo string, resources corev1.ResourceRequirements, buildOpts omsv1alpha1.BuildOptions, dedupDestination string) *batchv1.Job {
+// defaultDockerAuthSecret is the chart-level Secret carrying the push
+// credentials Kaniko has always mounted. It is the base layer of every
+// synthesized auth config; spec.pullSecret (when set) merges on top.
+const defaultDockerAuthSecret = "image-registry-secret"
+
+// authSecretName is the name of the per-CR Secret the controller synthesizes
+// to hold the merged docker config.json that Kaniko mounts. Derived from the
+// CR name so each ImagePatch gets its own auth and cleanup follows the CR.
+func authSecretName(cr *omsv1alpha1.ImagePatch) string {
+	return cr.Name + "-docker-auth"
+}
+
+// extractDockerConfig pulls the docker config.json bytes out of a Secret,
+// tolerating both the generic ("config.json") key Kaniko mounts and the
+// kubernetes.io/dockerconfigjson (".dockerconfigjson") key that user-created
+// pull secrets typically use. Returns nil when neither key is present.
+func extractDockerConfig(s *corev1.Secret) []byte {
+	if b, ok := s.Data["config.json"]; ok {
+		return b
+	}
+	if b, ok := s.Data[".dockerconfigjson"]; ok {
+		return b
+	}
+	return nil
+}
+
+// mergeDockerConfigs returns a docker config.json whose "auths" map is the
+// union of base and overlay, with overlay winning on registry-key conflicts.
+// Non-auths top-level keys from base (e.g. credHelpers) are preserved. Either
+// input may be empty; an empty input contributes nothing.
+func mergeDockerConfigs(base, overlay []byte) ([]byte, error) {
+	merged := map[string]json.RawMessage{}
+	auths := map[string]json.RawMessage{}
+
+	consume := func(raw []byte) error {
+		if len(raw) == 0 {
+			return nil
+		}
+		var doc map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			return err
+		}
+		for k, v := range doc {
+			if k == "auths" {
+				var a map[string]json.RawMessage
+				if err := json.Unmarshal(v, &a); err != nil {
+					return err
+				}
+				for reg, cred := range a {
+					auths[reg] = cred
+				}
+				continue
+			}
+			merged[k] = v
+		}
+		return nil
+	}
+
+	if err := consume(base); err != nil {
+		return nil, err
+	}
+	if err := consume(overlay); err != nil {
+		return nil, err
+	}
+
+	authsRaw, err := json.Marshal(auths)
+	if err != nil {
+		return nil, err
+	}
+	merged["auths"] = authsRaw
+	return json.Marshal(merged)
+}
+
+// pullDockerConfig returns the docker config.json bytes from the CR's
+// pullSecret, or nil when no pullSecret is set or it can't be loaded/read.
+// It feeds the pre-flight platform inspect so a private BaseImage is read
+// with real credentials; nil makes the inspect anonymous (fail-open),
+// matching the behaviour before pullSecret existed. A missing/garbled
+// secret is logged, not fatal -- the inspect just falls back to anonymous
+// and, failing that, kaniko still runs under its own mounted creds.
+func (r *ImagePatchReconciler) pullDockerConfig(ctx context.Context, cr *omsv1alpha1.ImagePatch, namespace string) []byte {
+	if cr.Spec.PullSecret == "" {
+		return nil
+	}
+	l := log.FromContext(ctx)
+	var pull corev1.Secret
+	if err := r.Get(ctx, types.NamespacedName{Name: cr.Spec.PullSecret, Namespace: namespace}, &pull); err != nil {
+		l.Info("pre-flight: pullSecret not loadable, inspecting base image anonymously",
+			"secret", cr.Spec.PullSecret, "err", err.Error())
+		return nil
+	}
+	return extractDockerConfig(&pull)
+}
+
+// createOrUpdateAuthSecret synthesizes the docker config.json that Kaniko
+// mounts for this build. The base layer is spec.pushSecret when set, else the
+// chart-level default registry secret (push credentials); spec.pullSecret,
+// when set, merges its auths on top so one build can pull a private base image
+// and still push to the target registry. The result is written to a per-CR
+// Secret in the build namespace. When neither field is set the merged config
+// equals the default, so behaviour matches mounting image-registry-secret
+// directly.
+func (r *ImagePatchReconciler) createOrUpdateAuthSecret(ctx context.Context, imagePatch *omsv1alpha1.ImagePatch, secretName, namespace string) error {
+	l := log.FromContext(ctx)
+
+	baseSecretName := defaultDockerAuthSecret
+	if imagePatch.Spec.PushSecret != "" {
+		baseSecretName = imagePatch.Spec.PushSecret
+	}
+	var base corev1.Secret
+	if err := r.Get(ctx, types.NamespacedName{Name: baseSecretName, Namespace: namespace}, &base); err != nil {
+		return fmt.Errorf("loading push secret %q: %w", baseSecretName, err)
+	}
+	baseCfg := extractDockerConfig(&base)
+
+	var overlayCfg []byte
+	if imagePatch.Spec.PullSecret != "" {
+		var pull corev1.Secret
+		if err := r.Get(ctx, types.NamespacedName{Name: imagePatch.Spec.PullSecret, Namespace: namespace}, &pull); err != nil {
+			return fmt.Errorf("loading pull secret %q: %w", imagePatch.Spec.PullSecret, err)
+		}
+		overlayCfg = extractDockerConfig(&pull)
+	}
+
+	merged, err := mergeDockerConfigs(baseCfg, overlayCfg)
+	if err != nil {
+		return fmt.Errorf("merging docker configs: %w", err)
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: namespace,
+			Labels:    sourceLabels(imagePatch),
+		},
+		Data: map[string][]byte{"config.json": merged},
+	}
+
+	// Owner refs only work within a single namespace; skip when the Secret
+	// lives elsewhere than the CR (mirrors createOrUpdateConfigMap).
+	if namespace == imagePatch.Namespace {
+		if err := controllerutil.SetControllerReference(imagePatch, secret, r.Scheme); err != nil {
+			return err
+		}
+	}
+
+	if err := r.Create(ctx, secret); err != nil {
+		if errors.IsAlreadyExists(err) {
+			existing := &corev1.Secret{}
+			if getErr := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, existing); getErr != nil {
+				return getErr
+			}
+			existing.Data = secret.Data
+			if updErr := r.Update(ctx, existing); updErr != nil {
+				return updErr
+			}
+			l.Info("Updated existing auth secret", "secret", secretName)
+			return nil
+		}
+		return err
+	}
+
+	l.Info("Created auth secret", "secret", secretName)
+	return nil
+}
+
+func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destination, kanikoImage, buildCacheRepo, authSecret string, resources corev1.ResourceRequirements, buildOpts omsv1alpha1.BuildOptions, dedupDestination string) *batchv1.Job {
 
 	backoffLimit := int32(0)
 	secretDefaultMode := int32(0664)
@@ -575,7 +763,7 @@ func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destin
 			Name: "docker-auth",
 			VolumeSource: corev1.VolumeSource{
 				Secret: &corev1.SecretVolumeSource{
-					SecretName:  "image-registry-secret",
+					SecretName:  authSecret,
 					DefaultMode: &secretDefaultMode,
 				},
 			},
@@ -1014,6 +1202,7 @@ func (r *ImagePatchReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&omsv1alpha1.ImagePatch{}).
 		Owns(&batchv1.Job{}).
 		Owns(&corev1.ConfigMap{}).
+		Owns(&corev1.Secret{}).
 		Named("imagepatch").
 		Complete(r)
 }
