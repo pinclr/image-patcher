@@ -123,12 +123,7 @@ leaderElection:
 
 # Controller pod resources. Memory sizing accounts for the cluster-wide
 # informer caches the manager holds for ImagePatch + Job + ConfigMap, plus
-# the docker config registry client used by the dedup short-circuit. The
-# previous 128Mi limit OOMKilled during informer LIST on clusters with
-# even moderate ConfigMap counts (exit 137 within ~20s of start). 256Mi
-# gives ~2x headroom over the observed resting state; raise further on
-# clusters with very large ConfigMap inventories. Request matches the
-# resting steady state so the scheduler has a realistic signal.
+# the docker config registry client used by the dedup short-circuit.
 resources:
   limits:
     cpu: 1
