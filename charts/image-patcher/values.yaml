@@ -131,8 +131,8 @@ leaderElection:
 # resting steady state so the scheduler has a realistic signal.
 resources:
   limits:
-    cpu: 500m
-    memory: 256Mi
+    cpu: 1
+    memory: 2Gi
   requests:
     cpu: 10m
     memory: 128Mi

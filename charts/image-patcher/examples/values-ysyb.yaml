@@ -13,6 +13,15 @@ image:
   # repository defaults to image-patch-system/image-patch-operator
   # tag defaults to .Chart.AppVersion (kept in sync with the build)
 
+replicaCount: 3
+resources:
+  limits:
+    cpu: 1
+    memory: 2Gi
+  requests:
+    cpu: 10m
+    memory: 128Mi
+
 kaniko:
   image:
     registry: registry.luna.ogpu.cloud
