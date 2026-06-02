@@ -444,7 +444,7 @@ func recordTerminalBuild(cr *omsv1alpha1.ImagePatch, newPhase, targetImage strin
 // Chart-level defaults (kaniko.buildCache.enabled) are intentionally
 // ignored here: this label is per-CR, not effective config.
 func buildLayerCacheHit(cr *omsv1alpha1.ImagePatch) bool {
-	return !(cr.Spec.BuildOptions != nil && boolPtrTrue(cr.Spec.BuildOptions.DisableBuildLayerCache))
+	return cr.Spec.BuildOptions == nil || !boolPtrTrue(cr.Spec.BuildOptions.DisableBuildLayerCache)
 }
 
 // isCanary returns whether the CR was submitted by the chart's
