@@ -23,17 +23,23 @@ imagePullSecrets: []
 config:
   # DEFAULT_IMAGE_REGISTRY: registry used when an ImagePatch does not set spec.targetImage.
   defaultImageRegistry: ""
-  # buildNamespace: when set, the controller creates the Kaniko build Job and
-  # its supporting ConfigMap in this namespace instead of the ImagePatch CR's
-  # own namespace. Cross-namespace owner references are not allowed
-  # by Kubernetes, so when buildNamespace differs from the CR's namespace the
-  # controller omits the OwnerReference and labels the Job / ConfigMap with
+  # buildNamespace: the namespace in which the controller creates Kaniko
+  # build Jobs and their supporting ConfigMaps — chart-level, set once at
+  # deploy time. The build namespace is decoupled from the ImagePatch CR's
+  # own namespace: CRs may live anywhere callers choose, but every Job
+  # lands here.
+  #
+  # Default is image-patch-system (the release namespace, asserted by the
+  # chart so it is guaranteed to exist). Empty falls back to the same
+  # canonical default inside the controller; explicitly set to any other
+  # namespace to land Jobs there (e.g. a dedicated build ns like "oms").
+  #
+  # When buildNamespace differs from a CR's namespace, cross-namespace
+  # OwnerReferences are not allowed by Kubernetes, so the controller omits
+  # SetControllerReference and labels the Job / ConfigMap with
   # imagepatch.source.name / imagepatch.source.namespace for traceability —
   # cleanup on CR deletion becomes the user's responsibility.
-  #
-  # Empty (default) preserves the legacy behavior: Job + ConfigMap created in
-  # the same namespace as the ImagePatch CR, owner-referenced for automatic GC.
-  buildNamespace: ""
+  buildNamespace: "image-patch-system"
 
 # Kaniko executor image, injected as KANIKO_IMAGE_NAME env var.
 # Override registry for air-gapped or mirrored environments.

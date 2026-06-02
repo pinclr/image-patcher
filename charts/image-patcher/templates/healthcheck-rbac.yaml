@@ -33,11 +33,12 @@ rules:
       - create
       - delete
       - patch
-  # Covers the case where config.buildNamespace is empty so Kaniko Jobs
-  # land in the same namespace as the CR. The separate cross-ns Role
-  # below covers the differing-namespace case. The probe reads Job specs
-  # to verify cache-tier disable flags translated to the expected Kaniko
-  # argument shape (e.g. --cache=true absent when disableBuildLayerCache).
+  # Covers the default case where config.buildNamespace equals the release
+  # namespace (image-patch-system), so Kaniko Jobs live alongside the probe.
+  # The separate cross-ns Role below covers the differing-namespace case.
+  # The probe reads Job specs to verify cache-tier disable flags translated
+  # to the expected Kaniko argument shape (e.g. --cache=true absent when
+  # disableBuildLayerCache).
   - apiGroups:
       - batch
     resources:
