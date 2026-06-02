@@ -17,6 +17,10 @@ coverage.*
 *.coverprofile
 profile.cov
 
+# envtest control-plane binaries downloaded by `make setup-envtest`
+# (etcd, kube-apiserver, kubectl). Local test artifacts, not source.
+/bin/k8s/
+
 # Dependency directories (remove the comment below to include it)
 # vendor/
 

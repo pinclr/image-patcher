@@ -6,6 +6,18 @@ on:
   pull_request:
     branches: [main]
 
+# These jobs run on self-hosted runners inside China, where the default
+# proxy.golang.org / sum.golang.org are slow-to-unreachable -- a partial
+# fetch yields corrupted module bits that fail `go.sum` verification
+# (checksum mismatch). Pin the China-local mirrors for every host-level Go
+# invocation (go vet/build, make test, golangci-lint, controller-gen).
+# Mirrors the Dockerfile's settings: goproxy.cn is Qiniu's mirror of
+# proxy.golang.org; sum.golang.google.cn is Google's official mirror of
+# sum.golang.org, so checksum verification stays cryptographically equivalent.
+env:
+  GOPROXY: https://goproxy.cn,direct
+  GOSUMDB: sum.golang.google.cn
+
 jobs:
   go-test:
     name: go test

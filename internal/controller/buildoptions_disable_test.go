@@ -26,7 +26,7 @@ func kanikoArgs(buildOpts omsv1alpha1.BuildOptions, buildCacheRepo, dedupRef str
 	cr.Name = "tc"
 	cr.Namespace = "ns"
 	j := constructJob(cr, "tc-job", "tc-cm", "ns", "registry.local/app:v1", "kaniko:test",
-		buildCacheRepo,
+		buildCacheRepo, "tc-docker-auth",
 		corev1.ResourceRequirements{}, buildOpts, dedupRef)
 	return j.Spec.Template.Spec.Containers[0].Args
 }

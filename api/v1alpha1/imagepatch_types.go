@@ -34,10 +34,30 @@ type ImagePatchSpec struct {
 	// +kubebuilder:validation:Required
 	BaseImage string `json:"baseImage"`
 
+	// PullSecret optionally names a Secret in the build namespace holding
+	// credentials for the private registry that hosts BaseImage (and any
+	// FromImages). The Secret may be of type kubernetes.io/dockerconfigjson
+	// (key ".dockerconfigjson") or carry a plain "config.json" key. Its
+	// auths are merged on top of the push credentials (PushSecret or the
+	// chart-level default), so a single build can pull a private base image
+	// and still push to the target registry. When empty, only the push
+	// credentials are used.
+	// +optional
+	PullSecret string `json:"pullSecret,omitempty"`
+
 	// TargetImage is the destination image to push the built image to.
 	// If not specified, the controller uses DEFAULT_IMAGE_REGISTRY env var to generate one.
 	// +optional
 	TargetImage string `json:"targetImage,omitempty"`
+
+	// PushSecret optionally names a Secret in the build namespace whose
+	// credentials replace the chart-level default registry secret as the
+	// base of the docker config Kaniko mounts. Use it when the target
+	// registry needs creds the default secret doesn't carry. The Secret may
+	// be of type kubernetes.io/dockerconfigjson (key ".dockerconfigjson") or
+	// carry a plain "config.json" key. When empty, the default secret is used.
+	// +optional
+	PushSecret string `json:"pushSecret,omitempty"`
 
 	// Env
 	ENV map[string]string `json:"env,omitempty"`
