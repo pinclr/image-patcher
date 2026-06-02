@@ -13,6 +13,15 @@ image:
   # repository defaults to image-patch-system/image-patch-operator
   # tag defaults to .Chart.AppVersion (kept in sync with the build)
 
+replicaCount: 3
+resources:
+  limits:
+    cpu: 1
+    memory: 2Gi
+  requests:
+    cpu: 10m
+    memory: 128Mi
+
 kaniko:
   image:
     registry: registry.luna.ogpu.cloud
@@ -58,10 +67,8 @@ dedup:
 
 config:
   defaultImageRegistry: registry.luna.ogpu.cloud/patched-images
-  # All Kaniko build Jobs land in `oms`, regardless of which namespace
-  # the ImagePatch CR itself lives in. See values.yaml for the cross-
-  # namespace owner-reference caveats.
-  buildNamespace: oms
+  # All Kaniko build Jobs land in default ns `image-patch-system`.
+  buildNamespace: image-patch-system
 
 # This cluster runs kube-prometheus-stack in the `monitoring` namespace
 # under the SA `k8s-prometheus` (not the upstream default

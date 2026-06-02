@@ -53,13 +53,14 @@ type ImagePatchReconciler struct {
 	Scheme          *runtime.Scheme
 	DefaultRegistry string
 	KanikoImage     string
-	// BuildNamespace, when set, is where Kaniko build Jobs and their
-	// supporting ConfigMaps are created — regardless of which namespace the
-	// ImagePatch CR itself lives in. Empty preserves the legacy
-	// same-namespace behavior. Cross-namespace OwnerReferences are not
-	// allowed by Kubernetes, so when BuildNamespace differs from the CR's
-	// namespace the controller skips SetControllerReference and instead
-	// stamps the Job / ConfigMap with labels:
+	// BuildNamespace is where Kaniko build Jobs and their supporting
+	// ConfigMaps are created — regardless of which namespace the ImagePatch
+	// CR itself lives in. Empty falls back to defaultBuildNamespace
+	// ("image-patch-system"); the build namespace is never derived from the
+	// CR's own namespace. Cross-namespace OwnerReferences are not allowed by
+	// Kubernetes, so when BuildNamespace differs from the CR's namespace the
+	// controller skips SetControllerReference and instead stamps the Job /
+	// ConfigMap with labels:
 	//   imagepatch.source.name
 	//   imagepatch.source.namespace
 	// for traceability. Cleanup on CR deletion becomes the user's
@@ -454,15 +455,21 @@ func jobFailureReason(job *batchv1.Job) string {
 	return metrics.FailureReasonBuild
 }
 
+// defaultBuildNamespace is the fallback build namespace when neither the
+// chart nor the env var supplies one. Matches the release namespace
+// enforced by the chart's assertNamespace helper, so the namespace is
+// guaranteed to exist on any standard install.
+const defaultBuildNamespace = "image-patch-system"
+
 // buildNamespaceFor returns the namespace in which build resources (Job +
-// ConfigMap) should be created for a given ImagePatch. When r.BuildNamespace
-// is empty the controller preserves legacy behavior and uses the CR's own
-// namespace.
-func (r *ImagePatchReconciler) buildNamespaceFor(cr *omsv1alpha1.ImagePatch) string {
+// ConfigMap) should be created. The build namespace is decoupled from the
+// CR's namespace: it is always the chart-level setting (or the canonical
+// default), never the CR's own namespace.
+func (r *ImagePatchReconciler) buildNamespaceFor(_ *omsv1alpha1.ImagePatch) string {
 	if r.BuildNamespace != "" {
 		return r.BuildNamespace
 	}
-	return cr.Namespace
+	return defaultBuildNamespace
 }
 
 // sourceLabels marks build resources with the originating ImagePatch CR's
