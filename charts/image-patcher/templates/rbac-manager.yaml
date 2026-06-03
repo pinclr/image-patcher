@@ -9,6 +9,17 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  # secrets: read for the CR's pullSecret in the pre-flight platform
+  # inspect, written to synthesize the per-CR <name>-docker-auth Secret
+  # that layers pull creds over push creds for Kaniko to mount ([MSP-104]).
+  # list/watch is required even when no CR uses the feature because
+  # Owns(&corev1.Secret{}) in SetupWithManager unconditionally starts a
+  # cluster-wide Secret informer at manager boot -- without this rule,
+  # the informer 403s, cache sync times out, and the controller exits
+  # before reconciling anything. Keep in sync with config/rbac/role.yaml.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
   # pods + pods/log are read by classifyBuildFailure -- the reconciler
   # tails the Kaniko build Pod's last ~200 log lines and keyword-matches
   # the kaniko/apt/curl error block to write a user-facing failure
