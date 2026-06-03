@@ -77,11 +77,10 @@ spec:
       image:
         registry: registry.luna.ogpu.cloud
         repository: image-patch-system/kaniko-executor
-      # Build cache: registry repo for Kaniko's intermediate RUN-layer cache.
-      # The repo path must already exist (or be auto-created) on the registry.
+      # Build cache: Kaniko's intermediate RUN-layer cache. The cache repo
+      # is automatically set to config.defaultImageRegistry.
       buildCache:
         enabled: true
-        repo: registry.luna.ogpu.cloud/image-patch-system/kaniko-build-cache
     config:
       defaultImageRegistry: registry.luna.ogpu.cloud/patched-images
     # Prometheus Operator scrape config. The ysyb cluster runs kps with a
