@@ -51,11 +51,10 @@ kaniko:
 
   # Build cache: container registry where Kaniko caches the result of each
   # intermediate RUN layer. When enabled, the controller passes
-  # --cache=true --cache-repo=<repo> to Kaniko. Multi-node safe.
+  # --cache=true --cache-repo=<repo> to Kaniko, with <repo> automatically
+  # set to config.defaultImageRegistry. Multi-node safe.
   buildCache:
     enabled: false
-    repo: ""
-    # Example: registry.luna.ogpu.cloud/patched-images/kaniko-build-cache
 
   # Chart-wide defaults for Kaniko snapshot / cache tuning. Each field on
   # an individual ImagePatch's spec.buildOptions overrides the matching

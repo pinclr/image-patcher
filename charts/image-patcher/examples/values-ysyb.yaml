@@ -29,11 +29,11 @@ kaniko:
     # tag defaults to v1.23.2
 
   # Build cache (intermediate RUN layers): pushed/pulled from a container
-  # registry via --cache=true --cache-repo=<repo>. Multi-node safe by
+  # registry via --cache=true --cache-repo=<repo>. The cache repo is
+  # automatically set to config.defaultImageRegistry. Multi-node safe by
   # construction (registry handles concurrency).
   buildCache:
     enabled: true
-    repo: registry.luna.ogpu.cloud/patched-images/kaniko-build-cache
 
   # Build-time tuning for this environment's ML/CUDA workloads. `redo`
   # snapshot mode cuts snapshot-scan time 5-10x on large bases at a

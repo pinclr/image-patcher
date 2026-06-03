@@ -70,9 +70,9 @@ spec:
             {{- end }}
             - name: KANIKO_IMAGE_NAME
               value: {{ include "image-patcher.kanikoImage" . | quote }}
-            {{- if and .Values.kaniko.buildCache.enabled .Values.kaniko.buildCache.repo }}
+            {{- if and .Values.kaniko.buildCache.enabled .Values.config.defaultImageRegistry }}
             - name: KANIKO_BUILD_CACHE_REPO
-              value: {{ .Values.kaniko.buildCache.repo | quote }}
+              value: {{ .Values.config.defaultImageRegistry | quote }}
             {{- end }}
             {{- with .Values.kaniko.buildOptions.snapshotMode }}
             - name: KANIKO_SNAPSHOT_MODE
