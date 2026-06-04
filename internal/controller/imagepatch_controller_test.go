@@ -21,8 +21,11 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -80,6 +83,117 @@ var _ = Describe("ImagePatch Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
 			// Example: If you expect a certain status condition after reconciliation, verify it here.
+		})
+	})
+
+	// MSP-117 regression: when the CR's namespace differs from the
+	// build namespace, Jobs / ConfigMaps / Secrets cannot carry an
+	// OwnerReference back to the CR, so GC will not cascade-delete
+	// them. The controller must drive cleanup itself via a finalizer.
+	Context("When the CR is deleted in a cross-namespace build", func() {
+		const (
+			crName = "msp117-cleanup"
+			crNs   = "default"
+		)
+		key := types.NamespacedName{Name: crName, Namespace: crNs}
+
+		// reconciler is built INSIDE the It block (not at Context body
+		// time) because k8sClient is only assigned in BeforeSuite --
+		// constructing it here would capture a nil Client and panic on
+		// the first r.Get(...).
+		var reconciler *ImagePatchReconciler
+
+		BeforeEach(func() {
+			reconciler = &ImagePatchReconciler{
+				Client:      k8sClient,
+				Scheme:      k8sClient.Scheme(),
+				KanikoImage: "gcr.io/kaniko-project/executor:v1.23.2",
+			}
+
+			cr := &omsv1alpha1.ImagePatch{
+				ObjectMeta: metav1.ObjectMeta{Name: crName, Namespace: crNs},
+				Spec: omsv1alpha1.ImagePatchSpec{
+					BaseImage: "ubuntu:22.04",
+				},
+			}
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			// Best-effort: if the test left a CR (e.g. assertion failed
+			// before cleanup), strip the finalizer so envtest can drop
+			// it; otherwise subsequent test runs would collide on name.
+			cr := &omsv1alpha1.ImagePatch{}
+			if err := k8sClient.Get(ctx, key, cr); err == nil {
+				cr.Finalizers = nil
+				_ = k8sClient.Update(ctx, cr)
+				_ = k8sClient.Delete(ctx, cr)
+			}
+		})
+
+		It("installs a finalizer and cleans up build resources on delete", func() {
+			By("first reconcile installs the finalizer")
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+			Expect(err).NotTo(HaveOccurred())
+
+			cr := &omsv1alpha1.ImagePatch{}
+			Expect(k8sClient.Get(ctx, key, cr)).To(Succeed())
+			Expect(cr.Finalizers).To(ContainElement(imagePatchFinalizer))
+
+			By("second reconcile creates the build Job + ConfigMap in image-patch-system")
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+			Expect(err).NotTo(HaveOccurred())
+
+			jobs := &batchv1.JobList{}
+			Expect(k8sClient.List(ctx, jobs,
+				client.InNamespace(defaultBuildNamespace),
+				client.MatchingLabels{
+					"imagepatch.source.name":      crName,
+					"imagepatch.source.namespace": crNs,
+				},
+			)).To(Succeed())
+			Expect(jobs.Items).To(HaveLen(1), "expected exactly one build Job stamped with source labels")
+
+			cms := &corev1.ConfigMapList{}
+			Expect(k8sClient.List(ctx, cms,
+				client.InNamespace(defaultBuildNamespace),
+				client.MatchingLabels{
+					"imagepatch.source.name":      crName,
+					"imagepatch.source.namespace": crNs,
+				},
+			)).To(Succeed())
+			Expect(cms.Items).To(HaveLen(1), "expected the Dockerfile ConfigMap")
+
+			By("deleting the CR sets DeletionTimestamp because the finalizer is in place")
+			Expect(k8sClient.Get(ctx, key, cr)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, cr)).To(Succeed())
+			Expect(k8sClient.Get(ctx, key, cr)).To(Succeed())
+			Expect(cr.DeletionTimestamp.IsZero()).To(BeFalse())
+
+			By("reconcile after delete tears down build resources and removes the finalizer")
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.List(ctx, jobs,
+				client.InNamespace(defaultBuildNamespace),
+				client.MatchingLabels{
+					"imagepatch.source.name":      crName,
+					"imagepatch.source.namespace": crNs,
+				},
+			)).To(Succeed())
+			Expect(jobs.Items).To(BeEmpty(), "build Job should be cleaned up by the finalizer")
+
+			Expect(k8sClient.List(ctx, cms,
+				client.InNamespace(defaultBuildNamespace),
+				client.MatchingLabels{
+					"imagepatch.source.name":      crName,
+					"imagepatch.source.namespace": crNs,
+				},
+			)).To(Succeed())
+			Expect(cms.Items).To(BeEmpty(), "Dockerfile ConfigMap should be cleaned up by the finalizer")
+
+			err = k8sClient.Get(ctx, key, cr)
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "CR should be physically removed once the finalizer is gone")
 		})
 	})
 })
