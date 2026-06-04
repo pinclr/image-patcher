@@ -97,14 +97,18 @@ var _ = Describe("ImagePatch Controller", func() {
 		)
 		key := types.NamespacedName{Name: crName, Namespace: crNs}
 
-		reconciler := &ImagePatchReconciler{
-			Client:      k8sClient,
-			Scheme:      nil, // populated in BeforeEach when k8sClient is ready
-			KanikoImage: "gcr.io/kaniko-project/executor:v1.23.2",
-		}
+		// reconciler is built INSIDE the It block (not at Context body
+		// time) because k8sClient is only assigned in BeforeSuite --
+		// constructing it here would capture a nil Client and panic on
+		// the first r.Get(...).
+		var reconciler *ImagePatchReconciler
 
 		BeforeEach(func() {
-			reconciler.Scheme = k8sClient.Scheme()
+			reconciler = &ImagePatchReconciler{
+				Client:      k8sClient,
+				Scheme:      k8sClient.Scheme(),
+				KanikoImage: "gcr.io/kaniko-project/executor:v1.23.2",
+			}
 
 			cr := &omsv1alpha1.ImagePatch{
 				ObjectMeta: metav1.ObjectMeta{Name: crName, Namespace: crNs},
