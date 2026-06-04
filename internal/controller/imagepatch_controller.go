@@ -128,6 +128,34 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	buildNs := r.buildNamespaceFor(&imagePatch)
 	crossNamespace := buildNs != imagePatch.Namespace
 
+	// Finalizer-driven cleanup. Cross-namespace build resources cannot
+	// carry an OwnerReference back to the CR (Kubernetes rejects
+	// cross-namespace owner refs), so GC will not cascade-delete them
+	// when the CR is removed -- the symptom that motivated MSP-117.
+	// Gate every other reconcile step on the finalizer so we never
+	// create a Job that we won't later be able to clean up.
+	if !imagePatch.DeletionTimestamp.IsZero() {
+		if controllerutil.ContainsFinalizer(&imagePatch, imagePatchFinalizer) {
+			if err := r.cleanupBuildResources(ctx, &imagePatch, buildNs); err != nil {
+				return ctrl.Result{}, err
+			}
+			controllerutil.RemoveFinalizer(&imagePatch, imagePatchFinalizer)
+			if err := r.Update(ctx, &imagePatch); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		return ctrl.Result{}, nil
+	}
+	if !controllerutil.ContainsFinalizer(&imagePatch, imagePatchFinalizer) {
+		controllerutil.AddFinalizer(&imagePatch, imagePatchFinalizer)
+		if err := r.Update(ctx, &imagePatch); err != nil {
+			return ctrl.Result{}, err
+		}
+		// Update bumps ResourceVersion; let the resulting watch event
+		// drive the next reconcile pass with the finalizer in place.
+		return ctrl.Result{}, nil
+	}
+
 	// Pre-flight platform inspect -- runs first, before any other check.
 	// "Should this image be patched?" is independent of "where is the
 	// build job?", and answering it up front saves a kaniko spin-up for
@@ -482,6 +510,47 @@ func jobFailureReason(job *batchv1.Job) string {
 // enforced by the chart's assertNamespace helper, so the namespace is
 // guaranteed to exist on any standard install.
 const defaultBuildNamespace = "image-patch-system"
+
+// imagePatchFinalizer guards the ImagePatch CR so the controller can
+// delete build resources (Job / ConfigMap / Secret) before the CR is
+// physically removed. Required for the cross-namespace path: when the
+// build namespace differs from the CR's namespace, Kubernetes rejects
+// the OwnerReference and GC cannot cascade, so cleanup must be driven
+// by the controller. Same-namespace builds keep the OwnerReference for
+// GC; the finalizer's by-label delete is a harmless no-op in that case
+// (GC may have removed the items first; DeleteAllOf is idempotent).
+const imagePatchFinalizer = "imagepatch.oms.ogpu.cloud/finalizer"
+
+// cleanupBuildResources deletes every Job, ConfigMap, and Secret the
+// controller created for this CR by matching the source labels stamped
+// in sourceLabels(). Scoped to buildNs because that's where the
+// resources live regardless of the CR's own namespace. Background
+// propagation on the Job pulls its Pod down with it without blocking
+// the finalizer on Pod-level GC. Idempotent: missing items return
+// NotFound which we swallow, so a retried finalizer pass after partial
+// success completes cleanly.
+func (r *ImagePatchReconciler) cleanupBuildResources(ctx context.Context, cr *omsv1alpha1.ImagePatch, buildNs string) error {
+	l := log.FromContext(ctx)
+	opts := []client.DeleteAllOfOption{
+		client.InNamespace(buildNs),
+		client.MatchingLabels{
+			"imagepatch.source.name":      cr.Name,
+			"imagepatch.source.namespace": cr.Namespace,
+		},
+		client.PropagationPolicy(metav1.DeletePropagationBackground),
+	}
+	if err := r.DeleteAllOf(ctx, &batchv1.Job{}, opts...); err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("deleting build jobs: %w", err)
+	}
+	if err := r.DeleteAllOf(ctx, &corev1.ConfigMap{}, opts...); err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("deleting build configmaps: %w", err)
+	}
+	if err := r.DeleteAllOf(ctx, &corev1.Secret{}, opts...); err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("deleting build auth secrets: %w", err)
+	}
+	l.Info("Cleaned up build resources", "imagepatch", cr.Name, "buildNamespace", buildNs)
+	return nil
+}
 
 // buildNamespaceFor returns the namespace in which build resources (Job +
 // ConfigMap) should be created. The build namespace is decoupled from the
