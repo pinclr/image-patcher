@@ -71,8 +71,14 @@ spec:
             - name: KANIKO_IMAGE_NAME
               value: {{ include "image-patcher.kanikoImage" . | quote }}
             {{- if and .Values.kaniko.buildCache.enabled .Values.config.defaultImageRegistry }}
+            # Append a /kaniko-build-cache sub-path so the cache-repo has at
+            # least two path segments. Harbor (and OCI registries that share
+            # its project/repo split) reject manifest writes when the path
+            # is a single segment -- `defaultImageRegistry` alone is often
+            # just `<registry>/<project>`, so writing manifests directly
+            # under it returns 400.
             - name: KANIKO_BUILD_CACHE_REPO
-              value: {{ .Values.config.defaultImageRegistry | quote }}
+              value: "{{ .Values.config.defaultImageRegistry }}/kaniko-build-cache"
             {{- end }}
             {{- with .Values.kaniko.buildOptions.snapshotMode }}
             - name: KANIKO_SNAPSHOT_MODE
