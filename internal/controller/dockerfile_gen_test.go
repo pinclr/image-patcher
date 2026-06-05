@@ -32,6 +32,8 @@ func TestDockerfileGenIncludesOSCheck(t *testing.T) {
 
 SHELL ["/bin/sh", "-c"]
 
+USER root
+
 RUN ` + imageOSCheckCommand + `
 
 `
@@ -54,10 +56,13 @@ func TestDockerfileGenMirror(t *testing.T) {
 	got := GenerateDockerfile(cr)
 
 	// The leading `RUN <imageOSCheckCommand>` is the built-in OS guard
-	// emitted unconditionally after the SHELL pin; see imagepatch_controller.go.
+	// emitted unconditionally after the SHELL pin and `USER root`; see
+	// imagepatch_controller.go.
 	want := `FROM ubuntu:24.04
 
 SHELL ["/bin/sh", "-c"]
+
+USER root
 
 RUN ` + imageOSCheckCommand + `
 
@@ -105,13 +110,16 @@ func TestDockerfileGenFromImages(t *testing.T) {
 	got := GenerateDockerfile(cr)
 
 	// `RUN <imageOSCheckCommand>` is the built-in OS guard emitted
-	// unconditionally after the SHELL pin -- before COPY --from and any
-	// user-supplied shell step. See imagepatch_controller.go.
+	// unconditionally after the SHELL pin and `USER root` -- before
+	// COPY --from and any user-supplied shell step. See
+	// imagepatch_controller.go.
 	want := `FROM lunalabs-acr-registry.cn-guangzhou.cr.aliyuncs.com/luna/devpod-rootfs:0.1.0 AS rootfs
 
 FROM ubuntu:24.04
 
 SHELL ["/bin/sh", "-c"]
+
+USER root
 
 RUN ` + imageOSCheckCommand + `
 

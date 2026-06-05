@@ -929,6 +929,16 @@ func GenerateDockerfile(cr *omsv1alpha1.ImagePatch) string {
 	// ["sh", "-lc"] on a minimal image without /bin in PATH).
 	sb.WriteString("SHELL [\"/bin/sh\", \"-c\"]\n\n")
 
+	// USER root - pin to root so subsequent RUNs (OS check, APT mirror
+	// rewrite under /etc/apt, apt-get install, optional useradd, etc.)
+	// have permission to touch system paths even when the base image
+	// sets USER to a non-root account (e.g. jupyter/tensorflow-notebook
+	// ships USER jovyan, which makes `rm /etc/apt/sources.list` fail
+	// with "Permission denied"). The optional `USER <name>` emitted by
+	// cr.Spec.User and per-step `step.User` below override this for the
+	// stages that need to drop privileges.
+	sb.WriteString("USER root\n\n")
+
 	// Image-OS guard. Must be the first RUN -- before APT mirror,
 	// COPY --from, or any user-defined shell step -- so that
 	// non-Ubuntu / unsupported-Ubuntu bases fail with the
