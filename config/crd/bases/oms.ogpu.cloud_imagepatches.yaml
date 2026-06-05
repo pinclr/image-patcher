@@ -218,6 +218,17 @@ spec:
                   be of type kubernetes.io/dockerconfigjson (key ".dockerconfigjson") or
                   carry a plain "config.json" key. When empty, the default secret is used.
                 type: string
+              runAsUser:
+                description: |-
+                  RunAsUser switches the final image's runtime user. Emitted as the
+                  last directive before ENTRYPOINT/CMD so every build step (OS check,
+                  apt, pip, shell, copy --from) still runs as root, but the resulting
+                  container starts as this user. The user MUST already exist in the
+                  base image -- image-patcher does not create it; if it doesn't, the
+                  build fails with `User <name> does not exist!`. To create a user
+                  instead, use the `user` block above (UserConfig), which adds
+                  groupadd/useradd RUN steps before switching.
+                type: string
               shell:
                 description: Shell
                 items:

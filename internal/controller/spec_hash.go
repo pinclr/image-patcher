@@ -60,13 +60,14 @@ func ComputeSpecHash(spec *omsv1alpha1.ImagePatchSpec, baseDigest string) string
 	// The struct's field order doubles as the canonical hash order;
 	// json tags use lowercase keys so encoder output is stable.
 	input := struct {
-		Base       string                `json:"base"`
+		Base       string                  `json:"base"`
 		APT        *omsv1alpha1.AptConfig  `json:"apt,omitempty"`
 		PIP        *omsv1alpha1.PipConfig  `json:"pip,omitempty"`
 		Shell      []omsv1alpha1.ShellStep `json:"shell,omitempty"`
 		FromImages []omsv1alpha1.FromImage `json:"fromImages,omitempty"`
 		Env        [][2]string             `json:"env,omitempty"`
 		User       *omsv1alpha1.UserConfig `json:"user,omitempty"`
+		RunAsUser  string                  `json:"runAsUser,omitempty"`
 		Entrypoint []string                `json:"entrypoint,omitempty"`
 		CMD        []string                `json:"cmd,omitempty"`
 	}{
@@ -77,6 +78,7 @@ func ComputeSpecHash(spec *omsv1alpha1.ImagePatchSpec, baseDigest string) string
 		FromImages: spec.FromImages,
 		Env:        envPairs,
 		User:       spec.User,
+		RunAsUser:  spec.RunAsUser,
 		Entrypoint: spec.Entrypoint,
 		CMD:        spec.CMD,
 	}

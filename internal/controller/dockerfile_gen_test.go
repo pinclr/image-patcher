@@ -87,6 +87,42 @@ RUN apt-get -q update && apt-get -q install -y \
 	}
 }
 
+// TestDockerfileGenRunAsUser locks the contract that RunAsUser emits
+// exactly two lines -- a getent-passwd existence check that fails
+// with the user-facing "User <name> does not exist!" message, then
+// USER <name> -- positioned after every build step and immediately
+// before ENTRYPOINT/CMD. The build itself stays on root (the
+// post-SHELL `USER root` pin); only the final image's runtime user
+// changes.
+func TestDockerfileGenRunAsUser(t *testing.T) {
+	cr := &v1alpha1.ImagePatch{
+		Spec: v1alpha1.ImagePatchSpec{
+			BaseImage:  "ubuntu:24.04",
+			RunAsUser:  "jovyan",
+			Entrypoint: []string{"/usr/local/bin/start.sh"},
+		},
+	}
+
+	got := GenerateDockerfile(cr)
+
+	want := `FROM ubuntu:24.04
+
+SHELL ["/bin/sh", "-c"]
+
+USER root
+
+RUN ` + imageOSCheckCommand + `
+
+RUN getent passwd jovyan >/dev/null 2>&1 || { echo "User jovyan does not exist!" >&2; exit 1; }
+USER jovyan
+
+ENTRYPOINT ["/usr/local/bin/start.sh"]
+`
+	if got != want {
+		t.Errorf("Dockerfile mismatch with RunAsUser:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
 func TestDockerfileGenFromImages(t *testing.T) {
 	cr := &v1alpha1.ImagePatch{
 		Spec: v1alpha1.ImagePatchSpec{
