@@ -81,6 +81,17 @@ type ImagePatchSpec struct {
 	// User
 	User *UserConfig `json:"user,omitempty"`
 
+	// RunAsUser switches the final image's runtime user. Emitted as the
+	// last directive before ENTRYPOINT/CMD so every build step (OS check,
+	// apt, pip, shell, copy --from) still runs as root, but the resulting
+	// container starts as this user. The user MUST already exist in the
+	// base image -- image-patcher does not create it; if it doesn't, the
+	// build fails with `User <name> does not exist!`. To create a user
+	// instead, use the `user` block above (UserConfig), which adds
+	// groupadd/useradd RUN steps before switching.
+	// +optional
+	RunAsUser string `json:"runAsUser,omitempty"`
+
 	Entrypoint []string `json:"entrypoint,omitempty"`
 	CMD        []string `json:"cmd,omitempty"`
 

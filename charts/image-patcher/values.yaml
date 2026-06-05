@@ -52,7 +52,10 @@ kaniko:
   # Build cache: container registry where Kaniko caches the result of each
   # intermediate RUN layer. When enabled, the controller passes
   # --cache=true --cache-repo=<repo> to Kaniko, with <repo> automatically
-  # set to config.defaultImageRegistry. Multi-node safe.
+  # derived as `<config.defaultImageRegistry>/kaniko-build-cache`. The
+  # /kaniko-build-cache suffix is required so the cache-repo path has at
+  # least two segments -- Harbor (and similar OCI registries) reject
+  # manifest writes to a single-segment path with 400. Multi-node safe.
   buildCache:
     enabled: false
 

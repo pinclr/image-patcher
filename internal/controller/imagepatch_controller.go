@@ -929,6 +929,16 @@ func GenerateDockerfile(cr *omsv1alpha1.ImagePatch) string {
 	// ["sh", "-lc"] on a minimal image without /bin in PATH).
 	sb.WriteString("SHELL [\"/bin/sh\", \"-c\"]\n\n")
 
+	// USER root - pin to root so subsequent RUNs (OS check, APT mirror
+	// rewrite under /etc/apt, apt-get install, optional useradd, etc.)
+	// have permission to touch system paths even when the base image
+	// sets USER to a non-root account (e.g. jupyter/tensorflow-notebook
+	// ships USER jovyan, which makes `rm /etc/apt/sources.list` fail
+	// with "Permission denied"). The optional `USER <name>` emitted by
+	// cr.Spec.User and per-step `step.User` below override this for the
+	// stages that need to drop privileges.
+	sb.WriteString("USER root\n\n")
+
 	// Image-OS guard. Must be the first RUN -- before APT mirror,
 	// COPY --from, or any user-defined shell step -- so that
 	// non-Ubuntu / unsupported-Ubuntu bases fail with the
@@ -1075,6 +1085,20 @@ func GenerateDockerfile(cr *omsv1alpha1.ImagePatch) string {
 		run := strings.TrimSpace(step.Run)
 		run = strings.ReplaceAll(run, "\n", " && \\\n    ")
 		sb.WriteString(fmt.Sprintf("RUN %s\n\n", run))
+	}
+
+	// RunAsUser - switch the final image's runtime user as the last
+	// step before ENTRYPOINT/CMD. The user is assumed to already exist
+	// in the base image; we surface a clear "User <name> does not exist!"
+	// message via getent passwd before emitting USER, so the failure
+	// mode is obvious in the build log rather than buried in kaniko's
+	// generic user-lookup error.
+	if cr.Spec.RunAsUser != "" {
+		sb.WriteString(fmt.Sprintf(
+			"RUN getent passwd %s >/dev/null 2>&1 || "+
+				"{ echo \"User %s does not exist!\" >&2; exit 1; }\n",
+			cr.Spec.RunAsUser, cr.Spec.RunAsUser))
+		sb.WriteString(fmt.Sprintf("USER %s\n\n", cr.Spec.RunAsUser))
 	}
 
 	// ENTRYPOINT
