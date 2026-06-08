@@ -101,18 +101,24 @@ type ImagePatchReconciler struct {
 	Registry *registry.Client
 }
 
-// +kubebuilder:rbac:groups=oms.ogpu.cloud,resources=imagepatches,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=oms.ogpu.cloud,resources=imagepatches/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=oms.ogpu.cloud,resources=imagepatches/finalizers,verbs=update
+// ImagePatch CRs may be created in any namespace, so the controller
+// keeps cluster-wide access for the CR itself. Every other resource
+// the controller touches (build Job, supporting ConfigMap, synthesized
+// docker-auth Secret, push/pull Secret reads, Pod / Pod log reads) is
+// confined to image-patch-system -- the fixed build namespace -- so
+// those rules are scoped to that namespace via controller-gen.
 // deletecollection is required (not just delete) because the
 // MSP-117 finalizer uses client.DeleteAllOf to tear down build
 // resources by source label; the K8s API checks the collection-DELETE
 // endpoint as the deletecollection verb separately from delete.
-// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete;deletecollection
-// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete;deletecollection
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete;deletecollection
-// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list
-// +kubebuilder:rbac:groups="",resources=pods/log,verbs=get
+// +kubebuilder:rbac:groups=oms.ogpu.cloud,resources=imagepatches,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=oms.ogpu.cloud,resources=imagepatches/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=oms.ogpu.cloud,resources=imagepatches/finalizers,verbs=update
+// +kubebuilder:rbac:groups=batch,resources=jobs,namespace=image-patch-system,verbs=get;list;watch;create;update;patch;delete;deletecollection
+// +kubebuilder:rbac:groups="",resources=configmaps,namespace=image-patch-system,verbs=get;list;watch;create;update;patch;delete;deletecollection
+// +kubebuilder:rbac:groups="",resources=secrets,namespace=image-patch-system,verbs=get;list;watch;create;update;patch;delete;deletecollection
+// +kubebuilder:rbac:groups="",resources=pods,namespace=image-patch-system,verbs=get;list
+// +kubebuilder:rbac:groups="",resources=pods/log,namespace=image-patch-system,verbs=get
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.

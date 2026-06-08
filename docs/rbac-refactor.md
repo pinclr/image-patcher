@@ -219,15 +219,17 @@ namespaced markers for the build resources:
 Drop `create` / `delete` on `imagepatches`; the controller never
 calls them.
 
-### Step 2 — let CI regenerate `config/rbac/role.yaml`
+### Step 2 — regenerate `config/rbac/role.yaml` locally
 
-The repo's workflow runs `make manifests` and commits the result back
-(or fails the build if the checked-in file drifts). After pushing
-Step 1, expect the regenerated `config/rbac/role.yaml` to split into
-a slim ClusterRole + a Role keyed to `image-patch-system`. Sanity-
-check that diff in the PR; if `make manifests` is *not* wired into
-CI for this repo, regenerate locally before pushing the follow-up
-commit.
+CI runs `make sync-crds` (`.github/workflows/ci.yml:128-134`) and
+**fails** the build if the checked-in `config/rbac/role.yaml` drifts
+from the controller-gen output — it does not auto-commit. So run
+`make manifests` locally after Step 1 and stage the regenerated file
+in the same commit; otherwise the first CI run will be red.
+
+Expected diff: the single `role.yaml` splits into a slim ClusterRole
+(only `imagepatches*` rules) plus a Role keyed to
+`image-patch-system`.
 
 ### Step 3 — rewrite `charts/image-patcher/templates/rbac-manager.yaml`
 
@@ -241,12 +243,12 @@ Replace the current single ClusterRole/ClusterRoleBinding pair with:
 Naming convention (so the ClusterRoleBinding upgrades in place
 without orphans):
 
-| Object             | Name                                                                       |
-| ------------------ | -------------------------------------------------------------------------- |
-| ClusterRole        | `{{ include "image-patcher.fullname" . }}-manager-role` (unchanged)        |
-| ClusterRoleBinding | `{{ include "image-patcher.fullname" . }}-manager-rolebinding` (unchanged) |
+| Object             | Name                                                                                  |
+| ------------------ | ------------------------------------------------------------------------------------- |
+| ClusterRole        | `{{ include "image-patcher.fullname" . }}-manager-role` (unchanged)                   |
+| ClusterRoleBinding | `{{ include "image-patcher.fullname" . }}-manager-rolebinding` (unchanged)            |
 | Role               | `{{ include "image-patcher.fullname" . }}-manager-role` (same short name, namespaced) |
-| RoleBinding        | `{{ include "image-patcher.fullname" . }}-manager-rolebinding`             |
+| RoleBinding        | `{{ include "image-patcher.fullname" . }}-manager-rolebinding`                        |
 
 Refresh the in-file comments — the long secrets/pods rationale in the
 current ClusterRole no longer fits the cluster-scoped one (it now
