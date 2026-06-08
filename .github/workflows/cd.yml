@@ -79,8 +79,12 @@ jobs:
             echo "::error::IMAGE_REGISTRY repo secret is not set"
             exit 1
           fi
+          # This private registry namespaces repos under a project, so it keeps
+          # the image-patch-system/ prefix; the public registries (GHCR/Quay)
+          # carry the org in the registry segment and use the flat repo name.
           make docker-build docker-push \
             IMAGE_REGISTRY="$IMAGE_REGISTRY" \
+            IMAGE_REPOSITORY="image-patch-system/image-patcher-operator" \
             IMAGE_EXTRA_TAGS="latest" \
             CONTAINER_TOOL="sudo docker"
 
