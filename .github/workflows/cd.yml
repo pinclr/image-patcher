@@ -51,6 +51,42 @@ jobs:
             IMAGE_REGISTRIES="ghcr.io/${{ github.repository_owner }} quay.io/${{ github.repository_owner }}" \
             IMAGE_EXTRA_TAGS="latest"
 
+  # The Helm chart is also published publicly as an OCI artifact to GHCR so it
+  # can be indexed by Artifact Hub (https://artifacthub.io). Additive: the
+  # internal ChartMuseum publish below is unchanged. Runs on a GitHub-hosted
+  # runner because GHCR is public-reachable and authenticates via GITHUB_TOKEN.
+  publish-public-chart:
+    name: publish chart (GHCR OCI)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push the chart package to ghcr.io under the repo owner
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.1
+
+      - name: log in to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      # Pushes oci://ghcr.io/<owner>/charts/image-patcher:<chart version from
+      # Chart.yaml>. Artifact Hub indexes the chart from this OCI reference.
+      - name: package and push chart to GHCR
+        run: |
+          dest="${{ runner.temp }}/charts"
+          mkdir -p "$dest"
+          chart_tgz=$(helm package charts/image-patcher -d "$dest" \
+            | sed -n 's/.*saved it to: //p')
+          if [ -z "$chart_tgz" ] || [ ! -f "$chart_tgz" ]; then
+            echo "::error::helm package did not report a packaged file"
+            exit 1
+          fi
+          helm push "$chart_tgz" "oci://ghcr.io/${{ github.repository_owner }}/charts"
+
   # The chart is published to an internal-only ChartMuseum and the private
   # registry push relies on the self-hosted runner's daemon auth + network, so
   # this job stays on the self-hosted runner.
