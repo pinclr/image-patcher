@@ -10,7 +10,7 @@
 
 image:
   registry: registry.luna.ogpu.cloud
-  # repository defaults to image-patch-system/image-patch-operator
+  # repository defaults to image-patcher-operator
   # tag defaults to .Chart.AppVersion (kept in sync with the build)
 
 replicaCount: 3

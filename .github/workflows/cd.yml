@@ -14,13 +14,54 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  publish:
-    name: publish image + chart
+  # Public images go to GHCR + Quay.io. These registries are reachable from
+  # GitHub-hosted runners (the self-hosted China runner cannot build images yet
+  # -- see MSP-46 -- and would route to public registries poorly), so this job
+  # runs on ubuntu-latest. GHCR authenticates with the built-in GITHUB_TOKEN;
+  # Quay needs a robot-account secret pair.
+  publish-public-image:
+    name: publish image (GHCR + Quay)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io under the repository owner
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: log in to Quay.io
+        uses: docker/login-action@v3
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      # Build once and push the version tag (from Chart.yaml appVersion) plus
+      # :latest to both registries. github.repository_owner is lowercase here
+      # ("pinclr"), which GHCR requires; the Quay namespace matches by convention.
+      - name: build and push controller image
+        run: |
+          make docker-build docker-push \
+            IMAGE_REGISTRIES="ghcr.io/${{ github.repository_owner }} quay.io/${{ github.repository_owner }}" \
+            IMAGE_EXTRA_TAGS="latest"
+
+  # The chart is published to an internal-only ChartMuseum and the private
+  # registry push relies on the self-hosted runner's daemon auth + network, so
+  # this job stays on the self-hosted runner.
+  publish-chart:
+    name: publish chart + private image
     runs-on: [self-hosted, imagepatcher, build]
     steps:
       - uses: actions/checkout@v4
 
-      # TODO(MSP-46): image build skipped pending runner-image update.
+      # TODO(MSP-46): private-registry image build skipped pending runner-image
+      # update.
       #
       # The current runner pod sets no_new_privs, which blocks both `sudo`
       # (so we cannot apt-install build tooling at workflow time) and
@@ -30,7 +71,7 @@ jobs:
       # and the pod spec relaxed (drop no_new_privs / loosen seccomp),
       # re-enable the steps below by flipping `if: false` to `if: true` or
       # removing the guard entirely.
-      - name: build and push controller image
+      - name: build and push controller image to private registry
         env:
           IMAGE_REGISTRY: ${{ secrets.IMAGE_REGISTRY }}
         run: |
@@ -40,6 +81,7 @@ jobs:
           fi
           make docker-build docker-push \
             IMAGE_REGISTRY="$IMAGE_REGISTRY" \
+            IMAGE_EXTRA_TAGS="latest" \
             CONTAINER_TOOL="sudo docker"
 
       - uses: azure/setup-helm@v4
