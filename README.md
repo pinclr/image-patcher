@@ -12,50 +12,43 @@ image-patch-operator lets you define image customizations (apt packages, shell c
 
 - kubectl v1.21+
 - A Kubernetes v1.21+ cluster
-- Helm v3.x
-- A container registry you can push the controller image to
+- Helm v3.8+ (OCI support)
+- A container registry where the operator will push the *patched* images it builds
+  (the controller image and chart themselves are published publicly — see below)
 
-### 1. Build and push the controller image
+### Published images and chart
 
-The image tag is sourced from `appVersion` in `charts/image-patcher/Chart.yaml`, so the build always matches what the chart will pull. You only need to point the build at your registry:
+Released artifacts are public — you do not need to build anything to install:
 
-```sh
-make docker-build docker-push IMAGE_REGISTRY=registry.example.com
-```
+| Artifact | Location |
+| --- | --- |
+| Controller image | `ghcr.io/pinclr/image-patcher-operator:<appVersion>` (also `:latest`) |
+| Controller image (mirror) | `quay.io/pinclr/image-patcher-operator:<appVersion>` |
+| Helm chart (OCI) | `oci://ghcr.io/pinclr/charts/image-patcher`, version `<version>` |
 
-Built artifact: `<IMAGE_REGISTRY>/image-patch-system/image-patch-operator:<appVersion>`.
+The chart is also listed on [Artifact Hub](https://artifacthub.io/packages/search?ts_query_web=image-patcher). The image tag tracks `appVersion`, and the chart version tracks `version`, both in `charts/image-patcher/Chart.yaml`.
 
-Override `IMAGE_REPOSITORY` if you publish under a different path, or `PLATFORM` for non-amd64 targets.
+### 1. Prepare a values file
 
-### 2. Prepare a values file
-
-Copy and edit one of the bundled examples:
-
-```sh
-cp charts/image-patcher/examples/values-ysyb.yaml my-values.yaml
-```
-
-Minimal contents:
+`image.registry` is required (the chart never silently pulls from docker.io). Point it at one of the public registries and set where the operator should push the images it builds:
 
 ```yaml
 image:
-  registry: registry.example.com   # must match the registry you pushed to in step 1
-
-kaniko:
-  image:
-    registry: registry.example.com           # only override for air-gapped envs
-    repository: image-patch-system/kaniko-executor
+  registry: ghcr.io/pinclr        # or quay.io/pinclr
 
 config:
-  defaultImageRegistry: registry.example.com/patched-images
+  defaultImageRegistry: registry.example.com/patched-images   # destination for built images; optional if every ImagePatch sets spec.targetImage
 ```
 
-Defaults you usually do not need to touch live in `charts/image-patcher/values.yaml`.
+`image.repository` defaults to `image-patcher-operator` and `image.tag` to the chart's `appVersion`, so the values above resolve to `ghcr.io/pinclr/image-patcher-operator:<appVersion>`. Other defaults you usually do not need to touch live in `charts/image-patcher/values.yaml`; the bundled `charts/image-patcher/examples/` show a private-registry setup.
 
-### 3. Install the chart
+### 2. Install the chart
+
+Install directly from the published OCI chart:
 
 ```sh
-helm install image-patch ./charts/image-patcher \
+helm install image-patch oci://ghcr.io/pinclr/charts/image-patcher \
+  --version <version> \
   -n image-patch-system --create-namespace \
   -f my-values.yaml
 ```
@@ -67,6 +60,18 @@ Verify:
 ```sh
 kubectl -n image-patch-system get pods
 ```
+
+### Build from source (alternative)
+
+To run a self-built controller image — e.g. for an air-gapped or private registry — build and push it yourself, then install the local chart instead of the published one. The image tag is sourced from `appVersion` in `charts/image-patcher/Chart.yaml`, so the build always matches what the chart pulls:
+
+```sh
+make docker-build docker-push IMAGE_REGISTRIES="registry.example.com/myns"
+helm install image-patch ./charts/image-patcher \
+  -n image-patch-system --create-namespace -f my-values.yaml
+```
+
+Built artifact: `registry.example.com/myns/image-patcher-operator:<appVersion>`. `IMAGE_REGISTRIES` is space-separated to publish to several registries at once; add `IMAGE_EXTRA_TAGS=latest` for extra tags, or override `IMAGE_REPOSITORY`/`PLATFORM` to change the path or target architecture. Set `my-values.yaml`'s `image.registry` (and `image.repository` if you overrode it) to match what you pushed.
 
 ### Upgrade
 
