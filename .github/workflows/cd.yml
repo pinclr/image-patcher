@@ -94,6 +94,13 @@ jobs:
     name: publish chart + private image
     runs-on: [self-hosted, imagepatcher, build]
     steps:
+      # The self-hosted runner's workspace persists between runs, and `make
+      # test` extracts envtest binaries into bin/k8s with read-only dirs (0555).
+      # actions/checkout's `git clean -ffdx` then can't unlink them (EACCES) and
+      # the job dies at checkout. Make the leftovers writable first; an absent
+      # dir is a no-op. Mirrors the guard on every ci.yml job.
+      - name: make stale envtest binaries deletable
+        run: chmod -R u+w "${{ github.workspace }}/bin/k8s" 2>/dev/null || true
       - uses: actions/checkout@v4
 
       # TODO(MSP-46): private-registry image build skipped pending runner-image
