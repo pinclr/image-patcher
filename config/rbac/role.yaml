@@ -5,6 +5,37 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
+  - oms.ogpu.cloud
+  resources:
+  - imagepatches
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - oms.ogpu.cloud
+  resources:
+  - imagepatches/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - oms.ogpu.cloud
+  resources:
+  - imagepatches/status
+  verbs:
+  - get
+  - patch
+  - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: manager-role
+  namespace: image-patch-system
+rules:
+- apiGroups:
   - ""
   resources:
   - configmaps
@@ -44,29 +75,3 @@ rules:
   - patch
   - update
   - watch
-- apiGroups:
-  - oms.ogpu.cloud
-  resources:
-  - imagepatches
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - oms.ogpu.cloud
-  resources:
-  - imagepatches/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - oms.ogpu.cloud
-  resources:
-  - imagepatches/status
-  verbs:
-  - get
-  - patch
-  - update

@@ -25,11 +25,15 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -185,6 +189,19 @@ func main() {
 		metricsServerOptions.KeyName = metricsCertKey
 	}
 
+	// Scope the Owns(...) informers to the build namespace. SetupWithManager
+	// declares Owns on Job / ConfigMap / Secret, which unconditionally start
+	// informers at manager boot -- with the new RBAC (Role in the build ns
+	// instead of cluster-wide ClusterRole), a cluster-wide list/watch would
+	// 403 and cache sync would never complete. ImagePatch is intentionally
+	// not in this map so the CR informer remains cluster-wide (users create
+	// CRs in their own namespaces). pods/log is fetched via the typed
+	// kubernetes clientset and does not go through the cache.
+	buildNs := os.Getenv("BUILD_NAMESPACE")
+	if buildNs == "" {
+		buildNs = "image-patch-system"
+	}
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
@@ -192,6 +209,13 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "da16e050.oms.ogpu.cloud",
+		Cache: cache.Options{
+			ByObject: map[client.Object]cache.ByObject{
+				&corev1.ConfigMap{}: {Namespaces: map[string]cache.Config{buildNs: {}}},
+				&corev1.Secret{}:    {Namespaces: map[string]cache.Config{buildNs: {}}},
+				&batchv1.Job{}:      {Namespaces: map[string]cache.Config{buildNs: {}}},
+			},
+		},
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
