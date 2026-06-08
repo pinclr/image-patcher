@@ -303,48 +303,197 @@ For existing deployments running the old chart, `helm upgrade` will:
 No orphaned RBAC objects; rollback is a chart re-install of the prior
 version.
 
-## Follow-up cleanup (separate PR)
+## Follow-up cleanup
 
-Once the new RBAC is in production and stable, the following are
-dead-weight and can be removed:
+Two buckets: small in-scope items we can land in a tiny follow-up
+commit (no behavior change), and items parked because we are
+**keeping** the `BUILD_NAMESPACE` / `config.buildNamespace` knob for
+forward flexibility — even though it is locked in practice today.
 
-### A. Drop the `BUILD_NAMESPACE` knob end-to-end
+### In scope (small follow-up)
 
-The build namespace is now locked to `image-patch-system`. The env
-variable, values field, and reconciler field exist only to express a
-configurability we no longer offer.
+1. **`.gitignore`** — add `/bin/setup-envtest*` so the envtest CLI
+   binaries that `make setup-envtest` drops into `bin/` stop showing
+   up as untracked.
+2. **Stale comment in `internal/controller/imagepatch_controller.go`
+   (~lines 295-301)** — the rationale "cross-namespace cache scopes,
+   which we don't enable" became inaccurate the moment we added
+   `cache.Options.ByObject` in `cmd/main.go`. The conclusion (still
+   need fixed-cadence requeue to observe terminal Job state) is
+   correct, but the cause is now "cross-ns Jobs carry no
+   OwnerReference, so `Owns(&Job{})` cannot map the event back to a
+   parent CR" — the informer itself **does** see the event. Update
+   the comment to match.
+3. **Orphan-RBAC inventory script** — see next section.
 
-- `charts/image-patcher/values.yaml` — remove the `config.buildNamespace`
-  field and its comment block (lines 21-42).
-- `charts/image-patcher/templates/deployment.yaml:67-69` — remove
-  the `BUILD_NAMESPACE` env block.
-- `cmd/main.go:240` — remove the `BuildNamespace` field assignment.
-- `internal/controller/imagepatch_controller.go` —
-  - delete `r.BuildNamespace` field (57-69) and the godoc above it;
-  - delete `buildNamespaceFor` (559-568);
-  - replace call sites (line 132) with `defaultBuildNamespace`.
-- `internal/controller/imagepatch_controller.go:516` —
-  `defaultBuildNamespace` becomes the single source of truth. Consider
-  promoting it to a package-level export so `cmd/main.go` can reuse it
-  for the cache config instead of repeating the string literal.
+### Operational tool — orphan RBAC cleanup script
 
-### B. Drop the cross-namespace branch in `healthcheck-rbac.yaml`
+Save as `hack/cleanup-orphan-rbac.sh`, `chmod +x` it, then run with
+no flags for a dry-run report or with `--apply` to delete. It
+compares "RBAC carrying this release's instance label in the cluster"
+against "RBAC currently in `helm get manifest`" and reports the
+difference — useful after any chart refactor that splits or renames
+RBAC objects, since Helm only deletes resources it tracked at the
+*previous* upgrade, so anything that drifted across multiple upgrades
+in divergent ways can linger.
 
-`charts/image-patcher/templates/healthcheck-rbac.yaml:65-98` is the
-cross-ns Job-read pair guarded by
-`{{- if and .Values.config.buildNamespace (ne .Values.config.buildNamespace .Release.Namespace) }}`.
-Once `config.buildNamespace` is gone, that branch is unreachable —
-delete it and the surrounding `{{- end }}`.
+```bash
+#!/usr/bin/env bash
+#
+# cleanup-orphan-rbac.sh
+#
+# Find RBAC objects (ClusterRole / ClusterRoleBinding / Role / RoleBinding)
+# in the cluster that are labeled as part of this Helm release but no
+# longer appear in `helm get manifest`. Reports candidates by default;
+# pass --apply to delete them.
+#
+# Requirements: kubectl, helm, awk, comm. (No yq / jq.)
+#
+# Usage:
+#   hack/cleanup-orphan-rbac.sh                       # dry-run
+#   hack/cleanup-orphan-rbac.sh --apply               # delete orphans
+#   hack/cleanup-orphan-rbac.sh --release my-instance # different release
+#
 
-### C. Tests — drop the cross-ns Job-read coverage if any
+set -euo pipefail
 
-Search `internal/controller/*_test.go` and `test/e2e/` for cases that
-exercise `BuildNamespace != CR.Namespace` *with* a third namespace
-involved (i.e. not just "CR in user ns, build in image-patch-system",
-which is the common case and **still applies** because the CR can
-live anywhere). If the only divergence is CR-ns vs build-ns, the
-crossNamespace code path in the reconciler is unchanged and the tests
-stay.
+RELEASE="${RELEASE:-image-patcher}"
+NAMESPACE="${NAMESPACE:-image-patch-system}"
+APPLY=false
+
+usage() {
+  cat >&2 <<EOF
+Usage: $0 [--release NAME] [--namespace NS] [--apply]
+
+  --release NAME     Helm release name (default: $RELEASE; env: RELEASE)
+  --namespace NS     Helm release namespace (default: $NAMESPACE; env: NAMESPACE)
+  --apply            Delete the orphan candidates. Without this, dry-run.
+  -h, --help         Show this help.
+
+Honors current kubectl context / KUBECONFIG.
+EOF
+  exit "${1:-0}"
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --release)   RELEASE="$2"; shift 2 ;;
+    --namespace) NAMESPACE="$2"; shift 2 ;;
+    --apply)     APPLY=true; shift ;;
+    -h|--help)   usage 0 ;;
+    *)           echo "unknown arg: $1" >&2; usage 1 ;;
+  esac
+done
+
+for bin in kubectl helm awk comm; do
+  command -v "$bin" >/dev/null 2>&1 || { echo "missing dependency: $bin" >&2; exit 1; }
+done
+
+# Extract (kind \t name \t namespace) triples from the multi-doc YAML
+# Helm has on record for this release. Only RBAC kinds are kept; the
+# parser keys off the top-level kind: line and the metadata.name /
+# metadata.namespace lines (indented exactly two spaces), which keeps
+# it immune to nested name:/namespace: fields inside roleRef/subjects.
+expected() {
+  helm get manifest "$RELEASE" -n "$NAMESPACE" 2>/dev/null \
+    | awk '
+      BEGIN { reset() }
+      function reset() { kind=""; name=""; ns=""; in_meta=0 }
+      function emit() {
+        if (kind ~ /^(ClusterRole|ClusterRoleBinding|Role|RoleBinding)$/) {
+          printf "%s\t%s\t%s\n", kind, name, ns
+        }
+      }
+      /^---/             { emit(); reset(); next }
+      /^kind: /          { kind=$2; next }
+      /^metadata:/       { in_meta=1; next }
+      in_meta && /^  name: /      { name=$2; next }
+      in_meta && /^  namespace: / { ns=$2; next }
+      /^[a-zA-Z]/        { in_meta=0 }
+      END                { emit() }
+    ' \
+    | sort -u
+}
+
+# All RBAC objects in the cluster carrying this release's instance label.
+actual() {
+  local sel="app.kubernetes.io/instance=${RELEASE}"
+  {
+    kubectl get clusterrole        -l "$sel" \
+      -o jsonpath='{range .items[*]}ClusterRole{"\t"}{.metadata.name}{"\t"}{"\n"}{end}'
+    kubectl get clusterrolebinding -l "$sel" \
+      -o jsonpath='{range .items[*]}ClusterRoleBinding{"\t"}{.metadata.name}{"\t"}{"\n"}{end}'
+    kubectl get role          -A   -l "$sel" \
+      -o jsonpath='{range .items[*]}Role{"\t"}{.metadata.name}{"\t"}{.metadata.namespace}{"\n"}{end}'
+    kubectl get rolebinding   -A   -l "$sel" \
+      -o jsonpath='{range .items[*]}RoleBinding{"\t"}{.metadata.name}{"\t"}{.metadata.namespace}{"\n"}{end}'
+  } | sort -u
+}
+
+EXP=$(expected)
+ACT=$(actual)
+
+orphans=$(comm -23 <(printf '%s\n' "$ACT") <(printf '%s\n' "$EXP") | sed '/^$/d')
+
+if [[ -z "$orphans" ]]; then
+  echo "OK: no orphan RBAC objects for release=$RELEASE"
+  exit 0
+fi
+
+echo "Orphan RBAC candidates (carry release=$RELEASE label, not in helm get manifest):"
+printf '  %-22s  %-50s  %s\n' KIND NAME NAMESPACE
+printf '  %-22s  %-50s  %s\n' ---------------------- -------------------------------------------------- ------------------
+printf '%s\n' "$orphans" | awk -F'\t' '{ ns = ($3 == "" ? "(cluster-scope)" : $3); printf "  %-22s  %-50s  %s\n", $1, $2, ns }'
+
+if ! $APPLY; then
+  echo
+  echo "(dry-run -- re-run with --apply to delete the above)"
+  exit 0
+fi
+
+echo
+echo "Deleting orphans..."
+while IFS=$'\t' read -r kind name ns; do
+  [[ -z "$kind" || -z "$name" ]] && continue
+  if [[ -n "$ns" ]]; then
+    kubectl delete "$kind" "$name" -n "$ns"
+  else
+    kubectl delete "$kind" "$name"
+  fi
+done <<< "$orphans"
+```
+
+**Caveat**: the script keys off `app.kubernetes.io/instance=<release>`,
+so it will miss anything from a kustomize-era deployment that
+never carried that label. For a one-time post-migration sweep, broaden
+the selector (e.g. add a second pass with `app.kubernetes.io/name=image-patcher`)
+or list with no selector at all and grep by name prefix.
+
+### Deferred — depends on locking `BUILD_NAMESPACE`
+
+We are **keeping** the `BUILD_NAMESPACE` env / `config.buildNamespace`
+values field for now, even though every production deployment targets
+`image-patch-system`. The knob preserves the option of redirecting
+builds to a separate namespace later (e.g. a dedicated builder ns
+isolated from the operator's own ns) without a chart-breaking change.
+As a consequence, the following cleanups from earlier drafts of this
+doc are **parked indefinitely**; revisit only if we decide to drop
+the knob:
+
+- **Drop the `BUILD_NAMESPACE` knob end-to-end** —
+  `charts/image-patcher/values.yaml` (`config.buildNamespace`),
+  `charts/image-patcher/templates/deployment.yaml:67-69` env block,
+  `cmd/main.go` env reads, `r.BuildNamespace` field and
+  `buildNamespaceFor` method in
+  `internal/controller/imagepatch_controller.go`,
+  `BUILD_NAMESPACE` wiring in
+  `charts/image-patcher/templates/healthcheck-cronjob.yaml`.
+- **Drop the cross-namespace block in
+  `charts/image-patcher/templates/healthcheck-rbac.yaml:65-98`** —
+  the conditional cross-ns Job-read Role/RoleBinding becomes
+  unreachable only after the knob is gone; today it is dormant in
+  the default render but real for any operator that does override
+  `config.buildNamespace`.
 
 ### Not cleanup-able
 
