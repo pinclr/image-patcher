@@ -85,6 +85,20 @@ kaniko:
     # is 336h (14 days). Empty keeps the Kaniko default.
     cacheTTL: ""
 
+  # Registry pull mirrors for Kaniko. Each entry maps an upstream
+  # registry host to a mirror host; the controller emits one
+  # --registry-map=<target>=<mirror> arg per entry to the Kaniko Job.
+  # Use this when build pods cannot reach the upstream directly
+  # (air-gapped clusters, blocked egress, or just slow public
+  # endpoints) and a pull-through cache is available. Only affects
+  # base image pulls -- the push --destination and the
+  # --cache-repo are untouched, so pushes still go to the real
+  # target registry. Empty (the default) leaves Kaniko's pull
+  # behavior unchanged.
+  mirrors: {}
+    # Example -- a placeholder that does not resolve, override per env:
+    # docker.io: docker.mirror.example.invalid
+
   # Resource requirements applied to every Kaniko build container.
   # ephemeral-storage is the critical one: Kaniko extracts the base
   # image into the container rootfs to execute RUN/COPY, so transient

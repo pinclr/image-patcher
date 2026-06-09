@@ -58,6 +58,17 @@ kaniko:
   buildOptions:
     snapshotMode: redo
 
+  # Pull-through mirrors for base image fetches. Build pods on this
+  # cluster can't reach docker.io / gcr.io / etc. directly, but the
+  # DaoCloud public mirror covers all five upstreams we currently
+  # pull from. Emitted as --registry-map=<target>=<mirror> per entry.
+  mirrors:
+    docker.io: docker.m.daocloud.io
+    gcr.io: gcr.m.daocloud.io
+    registry.k8s.io: k8s.m.daocloud.io
+    quay.io: quay.m.daocloud.io
+    ghcr.io: ghcr.m.daocloud.io
+
 # Content-addressed dedup: enabled. Same-repo tag write happens in
 # Kaniko (multi-destination push) and the controller HEADs the dedup
 # tag before creating each Job; on hit it retags the existing manifest
