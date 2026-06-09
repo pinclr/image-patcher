@@ -42,6 +42,30 @@ config:
 
 `image.repository` defaults to `image-patcher-operator` and `image.tag` to the chart's `appVersion`, so the values above resolve to `ghcr.io/pinclr/image-patcher-operator:<appVersion>`. Other defaults you usually do not need to touch live in `charts/image-patcher/values.yaml`; the bundled `charts/image-patcher/examples/` show a private-registry setup.
 
+#### Registry credentials
+
+The operator needs credentials to push the patched images it builds (and to pull private base images). List each registry under `registryCredentials` and the chart provisions the auth Secret for you — no manual `kubectl create secret`:
+
+```yaml
+registryCredentials:
+  - registry: registry.example.com
+    username: pushbot
+    password: ...            # supply via a separate values file, see below
+  - registry: other-registry.example.com
+    username: robot
+    password: ...
+```
+
+The chart base64-encodes these into a single docker `config.json` (`image-registry-secret`, key `config.json`). Both Kaniko (push) and the controller's dedup client read that one Secret and select the matching entry per registry, so **different target registries can use different creds**. When `config.buildNamespace` differs from the release namespace, the chart renders the Secret into both so builds and the controller each find it.
+
+Keep passwords out of version control: put them in a separate, gitignored values file and layer it at install time so only the passwords come from the secret file:
+
+```sh
+helm install image-patch ... -f my-values.yaml -f secret-creds.yaml
+```
+
+Leave `registryCredentials` empty (`[]`) to keep the legacy behaviour — provision a Secret named `image-registry-secret` (`Opaque`, key `config.json`) in the release namespace (and the build namespace when they differ) yourself. Per-build overrides are available via the CR's `pushSecret`/`pullSecret` (see [Spec fields](#spec-fields)).
+
 ### 2. Install the chart
 
 Install directly from the published OCI chart:
@@ -134,6 +158,8 @@ spec:
 |---|---|---|---|
 | `baseImage` | string | yes | Base image to patch (e.g. `ubuntu:24.04`) |
 | `targetImage` | string | no | Destination image. If omitted, auto-generated as `<registry>/<base-image-name>-patch:<base-tag>` |
+| `pushSecret` | string | no | Name of a Secret in the build namespace whose docker config **replaces** the chart-level `image-registry-secret` as the push creds for this build. Use when the target registry needs creds the chart-level Secret lacks. Secret may be `kubernetes.io/dockerconfigjson` or carry a `config.json` key. |
+| `pullSecret` | string | no | Name of a Secret in the build namespace whose auths are **merged on top** of the push creds, so this build can pull a private base image while still pushing to the target. Same Secret shapes as `pushSecret`. |
 | `env` | map[string]string | no | Environment variables (`ENV` directives) |
 | `apt.mirror` | string | no | APT mirror URL; Ubuntu codename is auto-detected from `/etc/os-release` |
 | `apt.install` | []string | no | APT packages to install |
@@ -154,6 +180,14 @@ When `spec.targetImage` is not specified, the controller auto-generates the targ
 2. Fallback: `<base-image-name>-patch:<base-tag>`
 
 The image name is the last segment of `spec.baseImage` (after the last `/`), and the tag is extracted after `:`. If no tag is specified, `latest` is used.
+
+#### Credential precedence
+
+By default every build uses the chart-level `image-registry-secret` (from `registryCredentials`) for both pull and push. The per-CR fields override this for a single build:
+
+- **`pushSecret` replaces, it does not merge.** When set, its docker config becomes the entire base for that build and the chart-level `image-registry-secret` is ignored — so `pushSecret` must itself carry every registry the build touches (target plus base image, unless the base is public/mirrored or covered by `pullSecret`).
+- **`pullSecret` merges on top** of the push creds (CR `pushSecret` if set, else the chart-level default), with the pull entry winning on per-registry conflicts. Use it to add private base-image creds without restating the push creds.
+- Referencing a missing `pushSecret`/`pullSecret` fails the reconcile (the Secret must already exist in the build namespace), unlike a missing chart-level `image-registry-secret`, which only surfaces when the build pod starts.
 
 Example: `baseImage: registry.luna.ogpu.cloud/luna/ubuntu-22.04:latest` with `config.defaultImageRegistry=registry.luna.ogpu.cloud/patched-images` produces `registry.luna.ogpu.cloud/patched-images/ubuntu-22.04-patch:latest`.
 
