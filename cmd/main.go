@@ -264,6 +264,7 @@ func main() {
 		BuildNamespace:           os.Getenv("BUILD_NAMESPACE"),
 		DefaultBuildOptions:      controller.BuildOptionsFromEnv(),
 		KanikoResources:          controller.KanikoResourcesFromEnv(setupLog),
+		KanikoRegistryMap:        controller.RegistryMapFromEnv(),
 		DedupEnabled:             dedupEnabled,
 		Registry:                 registryClient,
 	}).SetupWithManager(mgr); err != nil {

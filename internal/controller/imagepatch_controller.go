@@ -99,6 +99,13 @@ type ImagePatchReconciler struct {
 	// secret isn't mounted, so dedup-write keeps working even without
 	// controller-side registry auth.
 	Registry *registry.Client
+	// KanikoRegistryMap maps an upstream registry host to a mirror
+	// host. Each entry is emitted as --registry-map=<target>=<mirror>
+	// on the Kaniko Job so base image pulls go through the mirror.
+	// Only pulls are affected: --destination and --cache-repo still
+	// point at the real registries. Sourced from KANIKO_REGISTRY_MAP
+	// env (comma-separated <target>=<mirror> pairs) emitted by the chart.
+	KanikoRegistryMap map[string]string
 }
 
 // ImagePatch CRs may be created in any namespace, so the controller
@@ -265,7 +272,8 @@ func (r *ImagePatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 
 		j := constructJob(&imagePatch, jobName, cmName, buildNs, destination, r.KanikoImage,
-			r.KanikoBuildCacheRepo, authSecret, r.KanikoResources, buildOpts, dedupRef)
+			r.KanikoBuildCacheRepo, authSecret, r.KanikoResources, buildOpts, dedupRef,
+			r.KanikoRegistryMap)
 		// Owner references must live in the same namespace as the dependent
 		// (Kubernetes GC rejects cross-namespace ownership). When the build
 		// namespace matches the CR's namespace, set the controller reference
@@ -796,7 +804,7 @@ func (r *ImagePatchReconciler) createOrUpdateAuthSecret(ctx context.Context, ima
 	return nil
 }
 
-func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destination, kanikoImage, buildCacheRepo, authSecret string, resources corev1.ResourceRequirements, buildOpts omsv1alpha1.BuildOptions, dedupDestination string) *batchv1.Job {
+func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destination, kanikoImage, buildCacheRepo, authSecret string, resources corev1.ResourceRequirements, buildOpts omsv1alpha1.BuildOptions, dedupDestination string, registryMap map[string]string) *batchv1.Job {
 
 	backoffLimit := int32(0)
 	secretDefaultMode := int32(0664)
@@ -817,6 +825,7 @@ func constructJob(cr *omsv1alpha1.ImagePatch, jobName, cmName, namespace, destin
 		args = append(args, "--cache=true", "--cache-repo="+buildCacheRepo)
 	}
 	args = append(args, buildOptionsArgs(buildOpts)...)
+	args = append(args, registryMapArgs(registryMap)...)
 
 	volumeMounts := []corev1.VolumeMount{
 		{Name: "dockerfile", MountPath: "/workspace/Dockerfile", SubPath: "Dockerfile"},
@@ -1187,6 +1196,66 @@ func mergeBuildOptions(defaults omsv1alpha1.BuildOptions, override *omsv1alpha1.
 		out.DisableBuildLayerCache = &v
 	}
 	return out
+}
+
+// RegistryMapFromEnv parses the KANIKO_REGISTRY_MAP env var emitted
+// by the chart. The value is a comma-separated list of
+// <target>=<mirror> pairs, e.g. "docker.io=docker.m.daocloud.io,
+// gcr.io=gcr.m.daocloud.io". Empty / unset returns nil so the
+// controller omits --registry-map entirely and Kaniko keeps its
+// upstream behaviour.
+//
+// Malformed entries (no '=' or empty target) are skipped silently --
+// a partial misconfiguration must not block reconciliation.
+func RegistryMapFromEnv() map[string]string {
+	raw := os.Getenv("KANIKO_REGISTRY_MAP")
+	if raw == "" {
+		return nil
+	}
+	out := map[string]string{}
+	for _, pair := range strings.Split(raw, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		eq := strings.IndexByte(pair, '=')
+		if eq <= 0 {
+			continue
+		}
+		target := strings.TrimSpace(pair[:eq])
+		mirror := strings.TrimSpace(pair[eq+1:])
+		if target == "" || mirror == "" {
+			continue
+		}
+		out[target] = mirror
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// registryMapArgs renders the registry map into Kaniko
+// --registry-map=<target>=<mirror> flags, one per entry.
+//
+// docker.io is rewritten to index.docker.io because go-containerregistry
+// (Kaniko's underlying ref parser) normalizes refs without a registry
+// prefix (e.g. `tensorflow/tensorflow:nightly`) to `index.docker.io/...`
+// before matching the registry-map key. `docker.io` is the public-facing
+// name users naturally write in values; the rewrite spares them the
+// surprise of a no-op flag.
+func registryMapArgs(m map[string]string) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	args := make([]string, 0, len(m))
+	for t, mirror := range m {
+		if t == "docker.io" {
+			t = "index.docker.io"
+		}
+		args = append(args, "--registry-map="+t+"="+mirror)
+	}
+	return args
 }
 
 // buildOptionsArgs renders the BuildOptions into Kaniko CLI flags.

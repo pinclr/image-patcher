@@ -22,12 +22,16 @@ import (
 // kanikoArgs returns the args slice the generated Kaniko container
 // would be invoked with, for assertion convenience.
 func kanikoArgs(buildOpts omsv1alpha1.BuildOptions, buildCacheRepo, dedupRef string) []string {
+	return kanikoArgsWithRegistryMap(buildOpts, buildCacheRepo, dedupRef, nil)
+}
+
+func kanikoArgsWithRegistryMap(buildOpts omsv1alpha1.BuildOptions, buildCacheRepo, dedupRef string, registryMap map[string]string) []string {
 	cr := &omsv1alpha1.ImagePatch{}
 	cr.Name = "tc"
 	cr.Namespace = "ns"
 	j := constructJob(cr, "tc-job", "tc-cm", "ns", "registry.local/app:v1", "kaniko:test",
 		buildCacheRepo, "tc-docker-auth",
-		corev1.ResourceRequirements{}, buildOpts, dedupRef)
+		corev1.ResourceRequirements{}, buildOpts, dedupRef, registryMap)
 	return j.Spec.Template.Spec.Containers[0].Args
 }
 
