@@ -26,6 +26,29 @@
         }
       }
     },
+    "registryCredentials": {
+      "type": "array",
+      "description": "Registry username/password pairs. The chart base64-encodes each into a docker config.json auths map and provisions the image-registry-secret Secret (key config.json) automatically.",
+      "items": {
+        "type": "object",
+        "required": ["registry", "username", "password"],
+        "properties": {
+          "registry": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Registry host the creds authenticate to (e.g. registry.example.com)."
+          },
+          "username": {
+            "type": "string",
+            "minLength": 1
+          },
+          "password": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
     "kaniko": {
       "type": "object",
       "properties": {

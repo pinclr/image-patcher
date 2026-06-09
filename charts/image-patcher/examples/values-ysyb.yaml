@@ -69,12 +69,26 @@ kaniko:
     quay.io: quay.m.daocloud.io
     ghcr.io: ghcr.m.daocloud.io
 
+# Registry creds for luna + ACR, auto-populated into image-registry-secret
+# by the chart (key config.json). Builds and the controller both run in
+# image-patch-system here, so the single release-namespace Secret covers
+# both push and dedup. Supply real values from a secret values file / CI
+# store -- do not commit them.
+# registryCredentials:
+#   - registry: registry.luna.ogpu.cloud
+#     username: <luna-user>
+#     password: <luna-pass>
+#   - registry: <name>.azurecr.io
+#     username: <acr-user>
+#     password: <acr-pass>
+
 # Content-addressed dedup: enabled. Same-repo tag write happens in
 # Kaniko (multi-destination push) and the controller HEADs the dedup
 # tag before creating each Job; on hit it retags the existing manifest
-# and skips Kaniko entirely. See values.yaml for the cross-namespace
-# caveat -- image-registry-secret must exist in image-patch-system
-# (controller's ns), not only in oms (build ns where Kaniko mounts it).
+# and skips Kaniko entirely. image-registry-secret is auto-populated from
+# registryCredentials above (or provisioned out-of-band when that is
+# empty); builds and controller share image-patch-system here so one
+# Secret suffices.
 dedup:
   enabled: true
 
