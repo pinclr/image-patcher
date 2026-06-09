@@ -13,7 +13,7 @@ fullnameOverride: "image-patch-operator"
 # accidentally pull from docker.io.
 image:
   registry: ""
-  repository: image-patch-system/image-patch-operator
+  repository: image-patcher-operator
   tag: ""
   pullPolicy: IfNotPresent
 

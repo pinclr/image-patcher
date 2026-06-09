@@ -3,12 +3,31 @@
 CHART_DIR    ?= charts/image-patcher
 APP_VERSION  := $(shell awk '/^appVersion:/ {gsub(/"/, "", $$2); print $$2}' $(CHART_DIR)/Chart.yaml)
 
-# Controller image identity. Override IMAGE_REGISTRY (and IMAGE_REPOSITORY if needed)
-# on the command line, e.g.:
+# Controller image identity. The same image can be published to several
+# registries at once. IMAGE_REGISTRIES is a space-separated list of
+# "<registry>/<namespace>" prefixes; each is combined with IMAGE_REPOSITORY
+# and every tag in (IMAGE_TAG + IMAGE_EXTRA_TAGS). For example:
+#   make docker-build docker-push \
+#     IMAGE_REGISTRIES="ghcr.io/pinclr quay.io/pinclr" IMAGE_EXTRA_TAGS=latest
+# A single private registry still works via the back-compat IMAGE_REGISTRY var:
 #   make docker-build docker-push IMAGE_REGISTRY=registry.luna.ogpu.cloud
 IMAGE_REGISTRY   ?=
-IMAGE_REPOSITORY ?= image-patch-system/image-patch-operator
-IMG := $(if $(IMAGE_REGISTRY),$(IMAGE_REGISTRY)/,)$(IMAGE_REPOSITORY):$(APP_VERSION)
+IMAGE_REGISTRIES ?= $(strip $(IMAGE_REGISTRY))
+IMAGE_REPOSITORY ?= image-patcher-operator
+IMAGE_TAG        ?= $(APP_VERSION)
+# Additional tags to also build/push alongside IMAGE_TAG (e.g. "latest").
+IMAGE_EXTRA_TAGS ?=
+ALL_TAGS := $(IMAGE_TAG) $(IMAGE_EXTRA_TAGS)
+
+# Full image references = registries x tags. With no registry set we fall back
+# to a bare local tag so `make docker-build` still works for local development.
+ifeq ($(strip $(IMAGE_REGISTRIES)),)
+IMAGES := $(IMAGE_REPOSITORY):$(IMAGE_TAG)
+else
+IMAGES := $(foreach r,$(IMAGE_REGISTRIES),$(foreach t,$(ALL_TAGS),$(r)/$(IMAGE_REPOSITORY):$(t)))
+endif
+# Primary reference used as the local build tag; all others are tagged from it.
+IMG := $(firstword $(IMAGES))
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -123,15 +142,22 @@ run: manifests generate fmt vet ## Run a controller from your host.
 	go run ./cmd/main.go
 
 .PHONY: docker-build
-docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build --platform $(PLATFORM) -t ${IMG} .
+docker-build: ## Build docker image with the manager (tagged for every configured registry).
+	$(CONTAINER_TOOL) build --platform $(PLATFORM) -t $(IMG) .
+	@for img in $(filter-out $(IMG),$(IMAGES)); do \
+		echo "tagging $$img"; \
+		$(CONTAINER_TOOL) tag $(IMG) $$img; \
+	done
 
 .PHONY: docker-push
-docker-push: ## Push docker image with the manager. Requires IMAGE_REGISTRY to be set.
-	@if [ -z "$(IMAGE_REGISTRY)" ]; then \
-		echo "ERROR: IMAGE_REGISTRY must be set to push (e.g. IMAGE_REGISTRY=registry.example.com)" >&2; exit 1; \
+docker-push: ## Push docker image(s) to all configured registries. Requires IMAGE_REGISTRIES (or IMAGE_REGISTRY).
+	@if [ -z "$(strip $(IMAGE_REGISTRIES))" ]; then \
+		echo "ERROR: set IMAGE_REGISTRIES (or IMAGE_REGISTRY) to push, e.g. IMAGE_REGISTRIES=\"ghcr.io/pinclr quay.io/pinclr\"" >&2; exit 1; \
 	fi
-	$(CONTAINER_TOOL) push ${IMG}
+	@for img in $(IMAGES); do \
+		echo "pushing $$img"; \
+		$(CONTAINER_TOOL) push $$img; \
+	done
 
 ##@ Helm
 

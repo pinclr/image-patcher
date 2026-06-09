@@ -71,7 +71,9 @@ spec:
   values:
     image:
       registry: registry.luna.ogpu.cloud
-      # repository defaults to image-patch-system/image-patch-operator
+      # This private registry namespaces repos under a project, so override the
+      # flat chart default with the image-patch-system/ prefix used at build time.
+      repository: image-patch-system/image-patcher-operator
       # tag defaults to .Chart.AppVersion (v0.1.5 for chart 0.1.5)
     kaniko:
       image:

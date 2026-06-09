@@ -10,7 +10,9 @@
 
 image:
   registry: registry.luna.ogpu.cloud
-  # repository defaults to image-patch-system/image-patch-operator
+  # This private registry namespaces repos under a project, so override the
+  # flat chart default with the image-patch-system/ prefix used at build time.
+  repository: image-patch-system/image-patcher-operator
   # tag defaults to .Chart.AppVersion (kept in sync with the build)
 
 replicaCount: 3
