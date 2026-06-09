@@ -69,17 +69,19 @@ kaniko:
     quay.io: quay.m.daocloud.io
     ghcr.io: ghcr.m.daocloud.io
 
-# Registry creds for luna + ACR, auto-populated into image-registry-secret
-# by the chart (key config.json). Builds and the controller both run in
-# image-patch-system here, so the single release-namespace Secret covers
-# both push and dedup. Supply real values from a secret values file / CI
-# store -- do not commit them.
+# Registry creds for luna + Aliyun ACR, auto-populated into
+# image-registry-secret by the chart (key config.json). Builds and the
+# controller both run in image-patch-system here, so the single
+# release-namespace Secret covers both push and dedup. Registries and
+# usernames mirror the Secret currently provisioned in the cluster;
+# supply the passwords from a secret values file / CI store at deploy
+# time -- do NOT commit them.
 # registryCredentials:
 #   - registry: registry.luna.ogpu.cloud
-#     username: <luna-user>
+#     username: luna
 #     password: <luna-pass>
-#   - registry: <name>.azurecr.io
-#     username: <acr-user>
+#   - registry: lunalabs-acr-registry.cn-guangzhou.cr.aliyuncs.com
+#     username: acr@1493449996491911
 #     password: <acr-pass>
 
 # Content-addressed dedup: enabled. Same-repo tag write happens in
