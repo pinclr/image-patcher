@@ -85,8 +85,8 @@ kaniko:
     # is 336h (14 days). Empty keeps the Kaniko default.
     cacheTTL: ""
 
-  # Registry pull mirrors for Kaniko. Each entry maps an upstream
-  # registry host to a mirror host; the controller emits one
+  # Pull-through mirrors for Kaniko base image fetches. Each entry maps
+  # an upstream registry host to a mirror host; the controller emits one
   # --registry-map=<target>=<mirror> arg per entry to the Kaniko Job.
   # Use this when build pods cannot reach the upstream directly
   # (air-gapped clusters, blocked egress, or just slow public
@@ -101,7 +101,7 @@ kaniko:
   # refs without a registry prefix (e.g. `ubuntu:24.04`) to
   # `index.docker.io/...` -- a literal `docker.io` map key would
   # never match. Other hosts pass through unchanged.
-  mirrors: {}
+  registryMap: {}
     # Example -- a placeholder that does not resolve, override per env:
     # docker.io: docker.mirror.example.invalid
 

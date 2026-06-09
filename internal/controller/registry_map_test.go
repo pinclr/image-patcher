@@ -19,12 +19,12 @@ import (
 	omsv1alpha1 "image-patch-operator/api/v1alpha1"
 )
 
-func TestRegistryMirrors_EmitsRegistryMapArgs(t *testing.T) {
-	mirrors := map[string]string{
+func TestRegistryMap_EmitsRegistryMapArgs(t *testing.T) {
+	m := map[string]string{
 		"gcr.io":  "gcr.m.daocloud.io",
 		"quay.io": "quay.m.daocloud.io",
 	}
-	args := kanikoArgsWithMirrors(omsv1alpha1.BuildOptions{}, "", "", mirrors)
+	args := kanikoArgsWithRegistryMap(omsv1alpha1.BuildOptions{}, "", "", m)
 
 	var got []string
 	for _, a := range args {
@@ -42,8 +42,8 @@ func TestRegistryMirrors_EmitsRegistryMapArgs(t *testing.T) {
 	}
 }
 
-func TestRegistryMirrors_DockerIONormalizedToIndexDockerIO(t *testing.T) {
-	args := kanikoArgsWithMirrors(omsv1alpha1.BuildOptions{}, "", "", map[string]string{
+func TestRegistryMap_DockerIONormalizedToIndexDockerIO(t *testing.T) {
+	args := kanikoArgsWithRegistryMap(omsv1alpha1.BuildOptions{}, "", "", map[string]string{
 		"docker.io": "docker.m.daocloud.io",
 	})
 	var got string
@@ -58,16 +58,16 @@ func TestRegistryMirrors_DockerIONormalizedToIndexDockerIO(t *testing.T) {
 	}
 }
 
-func TestRegistryMirrors_EmptyMapOmitsFlag(t *testing.T) {
-	args := kanikoArgsWithMirrors(omsv1alpha1.BuildOptions{}, "", "", nil)
+func TestRegistryMap_EmptyMapOmitsFlag(t *testing.T) {
+	args := kanikoArgsWithRegistryMap(omsv1alpha1.BuildOptions{}, "", "", nil)
 	for _, a := range args {
 		if strings.HasPrefix(a, "--registry-map") {
-			t.Errorf("empty mirrors: %q should be omitted; got args: %v", a, args)
+			t.Errorf("empty registry map: %q should be omitted; got args: %v", a, args)
 		}
 	}
 }
 
-func TestRegistryMirrorsFromEnv(t *testing.T) {
+func TestRegistryMapFromEnv(t *testing.T) {
 	cases := []struct {
 		name string
 		raw  string
@@ -89,8 +89,8 @@ func TestRegistryMirrorsFromEnv(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			t.Setenv("KANIKO_REGISTRY_MIRRORS", c.raw)
-			got := RegistryMirrorsFromEnv()
+			t.Setenv("KANIKO_REGISTRY_MAP", c.raw)
+			got := RegistryMapFromEnv()
 			if len(got) != len(c.want) {
 				t.Fatalf("len mismatch: want %v, got %v", c.want, got)
 			}
@@ -101,5 +101,5 @@ func TestRegistryMirrorsFromEnv(t *testing.T) {
 			}
 		})
 	}
-	_ = os.Unsetenv("KANIKO_REGISTRY_MIRRORS")
+	_ = os.Unsetenv("KANIKO_REGISTRY_MAP")
 }

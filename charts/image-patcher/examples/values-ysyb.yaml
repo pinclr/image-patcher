@@ -62,7 +62,7 @@ kaniko:
   # cluster can't reach docker.io / gcr.io / etc. directly, but the
   # DaoCloud public mirror covers all five upstreams we currently
   # pull from. Emitted as --registry-map=<target>=<mirror> per entry.
-  mirrors:
+  registryMap:
     docker.io: docker.m.daocloud.io
     gcr.io: gcr.m.daocloud.io
     registry.k8s.io: k8s.m.daocloud.io

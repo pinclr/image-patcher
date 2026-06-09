@@ -100,12 +100,12 @@ spec:
             - name: KANIKO_RESOURCES
               value: {{ .Values.kaniko.resources | toJson | quote }}
             {{- end }}
-            {{- if .Values.kaniko.mirrors }}
+            {{- if .Values.kaniko.registryMap }}
             # Comma-separated <target>=<mirror> pairs; the controller
             # emits one --registry-map=<target>=<mirror> Kaniko arg per
             # entry.
-            - name: KANIKO_REGISTRY_MIRRORS
-              value: "{{- $first := true -}}{{- range $target, $mirror := .Values.kaniko.mirrors -}}{{- if not $first -}},{{- end -}}{{- $target -}}={{- $mirror -}}{{- $first = false -}}{{- end -}}"
+            - name: KANIKO_REGISTRY_MAP
+              value: "{{- $first := true -}}{{- range $target, $mirror := .Values.kaniko.registryMap -}}{{- if not $first -}},{{- end -}}{{- $target -}}={{- $mirror -}}{{- $first = false -}}{{- end -}}"
             {{- end }}
             - name: DEDUP_ENABLED
               value: {{ .Values.dedup.enabled | quote }}
