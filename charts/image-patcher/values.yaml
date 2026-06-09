@@ -95,6 +95,12 @@ kaniko:
   # --cache-repo are untouched, so pushes still go to the real
   # target registry. Empty (the default) leaves Kaniko's pull
   # behavior unchanged.
+  #
+  # `docker.io` is silently rewritten to `index.docker.io` before
+  # being passed to Kaniko, because go-containerregistry normalizes
+  # refs without a registry prefix (e.g. `ubuntu:24.04`) to
+  # `index.docker.io/...` -- a literal `docker.io` map key would
+  # never match. Other hosts pass through unchanged.
   mirrors: {}
     # Example -- a placeholder that does not resolve, override per env:
     # docker.io: docker.mirror.example.invalid

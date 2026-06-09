@@ -1237,12 +1237,22 @@ func RegistryMirrorsFromEnv() map[string]string {
 
 // registryMirrorArgs renders the registry mirror map into Kaniko
 // --registry-map=<target>=<mirror> flags, one per entry.
+//
+// docker.io is rewritten to index.docker.io because go-containerregistry
+// (Kaniko's underlying ref parser) normalizes refs without a registry
+// prefix (e.g. `tensorflow/tensorflow:nightly`) to `index.docker.io/...`
+// before matching the registry-map key. `docker.io` is the public-facing
+// name users naturally write in values; the rewrite spares them the
+// surprise of a no-op flag.
 func registryMirrorArgs(mirrors map[string]string) []string {
 	if len(mirrors) == 0 {
 		return nil
 	}
 	args := make([]string, 0, len(mirrors))
 	for t, m := range mirrors {
+		if t == "docker.io" {
+			t = "index.docker.io"
+		}
 		args = append(args, "--registry-map="+t+"="+m)
 	}
 	return args

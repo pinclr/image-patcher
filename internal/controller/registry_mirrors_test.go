@@ -21,8 +21,8 @@ import (
 
 func TestRegistryMirrors_EmitsRegistryMapArgs(t *testing.T) {
 	mirrors := map[string]string{
-		"docker.io": "docker.m.daocloud.io",
-		"gcr.io":    "gcr.m.daocloud.io",
+		"gcr.io":  "gcr.m.daocloud.io",
+		"quay.io": "quay.m.daocloud.io",
 	}
 	args := kanikoArgsWithMirrors(omsv1alpha1.BuildOptions{}, "", "", mirrors)
 
@@ -33,12 +33,28 @@ func TestRegistryMirrors_EmitsRegistryMapArgs(t *testing.T) {
 		}
 	}
 	want := []string{
-		"--registry-map=docker.io=docker.m.daocloud.io",
 		"--registry-map=gcr.io=gcr.m.daocloud.io",
+		"--registry-map=quay.io=quay.m.daocloud.io",
 	}
 	sort.Strings(got)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("registry-map args mismatch\nwant: %v\ngot:  %v", want, got)
+	}
+}
+
+func TestRegistryMirrors_DockerIONormalizedToIndexDockerIO(t *testing.T) {
+	args := kanikoArgsWithMirrors(omsv1alpha1.BuildOptions{}, "", "", map[string]string{
+		"docker.io": "docker.m.daocloud.io",
+	})
+	var got string
+	for _, a := range args {
+		if strings.HasPrefix(a, "--registry-map=") {
+			got = a
+		}
+	}
+	want := "--registry-map=index.docker.io=docker.m.daocloud.io"
+	if got != want {
+		t.Errorf("docker.io should be rewritten to index.docker.io\nwant: %q\ngot:  %q", want, got)
 	}
 }
 
