@@ -74,6 +74,19 @@ ServiceAccount name.
 {{- end }}
 
 {{/*
+Name of the Secret carrying registry auth (docker config JSON).
+Fixed to match the controller's defaultDockerAuthSecret const in
+internal/controller/imagepatch_controller.go, which the build Job mounts
+as Kaniko's docker config (used for base-image pull, cache, and push).
+The chart-generated Secret and the dedup mount reuse this name, and the
+data key is always "config.json" (the build Job mounts it with subPath
+config.json and no remapping).
+*/}}
+{{- define "image-patcher.registryAuthSecretName" -}}
+image-registry-secret
+{{- end }}
+
+{{/*
 Controller image reference.
 */}}
 {{- define "image-patcher.controllerImage" -}}

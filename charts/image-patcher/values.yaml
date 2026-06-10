@@ -310,6 +310,39 @@ dashboards:
   # Leave empty to land in the default folder.
   folderAnnotation: ""
 
+# Registry credentials, auto-populated into a Secret by the chart.
+#
+# General-purpose creds: Kaniko uses this one Secret for every registry
+# operation in a build -- base-image pull, layer-cache pull/push, and the
+# final push -- and the dedup client reuses it for HEAD/retag. It is not
+# push-only; whether an entry serves pull or push just depends on whether
+# that registry is the source or the destination.
+#
+# List one entry per registry. The chart base64-encodes each
+# username/password into a docker config.json "auths" map and creates
+# the Secret for you -- you no longer hand-create image-registry-secret
+# with `kubectl create secret`. Different source/target registries can
+# each carry their own entry.
+#
+# The Secret is always named image-registry-secret with key config.json
+# (the controller hard-codes the name for the build Job's docker-config
+# mount). When config.buildNamespace differs from the release namespace,
+# the chart renders an identical Secret into both so Kaniko (build ns)
+# and the dedup client (release ns) both find it.
+#
+# Leave empty ([]) to keep the legacy behaviour: provision
+# image-registry-secret out-of-band yourself.
+#
+# NOTE: these are plaintext creds in values -- supply them from a secret
+# values file / CI secret store, not a committed values.yaml.
+registryCredentials: []
+#  - registry: registry.luna.ogpu.cloud
+#    username: robot$ci
+#    password: s3cret
+#  - registry: myacr.azurecr.io
+#    username: ci-bot
+#    password: hunter2
+
 # Content-addressed build dedup. When on, the controller computes a
 # deterministic hash of every ImagePatch spec and:
 #
@@ -331,13 +364,13 @@ dashboards:
 # fail with MANIFEST_BLOB_UNKNOWN because blob scope is per-repo.
 #
 # The controller talks to the registry directly using the same
-# dockerconfigjson Kaniko mounts. The chart mounts that Secret into
-# the controller pod at /registry/.docker; see dockerConfigSecret
-# below. Cross-namespace caveat: the Secret must exist in the release
-# namespace ({{ .Release.Namespace }}). If the build namespace
-# differs (e.g. controller in image-patch-system, builds in oms), the
-# operator must provision an identical Secret in both -- the chart
-# does not copy it.
+# dockerconfigjson Kaniko mounts. The chart mounts that Secret
+# (image-registry-secret) into the controller pod at /registry/.docker.
+# Cross-namespace: the Secret must exist in the release namespace
+# ({{ .Release.Namespace }}) and, when the build namespace differs (e.g.
+# controller in image-patch-system, builds in oms), in that namespace
+# too. When registryCredentials is set the chart renders it into both;
+# otherwise provision an identical Secret in each yourself.
 #
 # Default on (Kaniko-side dedup-write is ~free; the short-circuit only
 # fires when the controller can reach the registry). Flip to false as
@@ -346,18 +379,10 @@ dashboards:
 # secret in the release namespace.
 dedup:
   enabled: true
-  # Name of the Secret in the release namespace holding docker config
-  # JSON, mounted into the controller pod for HEAD + manifest retag.
-  # Must contain auth for every registry the operator may write dedup
-  # tags to -- in practice the same Secret Kaniko already uses.
-  dockerConfigSecret: image-registry-secret
-  # Key within that Secret whose value is the docker config JSON. The
-  # default ("config.json") matches what Kaniko mounts in
-  # internal/controller/imagepatch_controller.go; a typed
-  # kubernetes.io/dockerconfigjson Secret would instead use
-  # ".dockerconfigjson". They are distinct Secret shapes -- pick the
-  # one that matches how your Secret was created.
-  dockerConfigSecretKey: config.json
+  # The Secret holding docker config JSON is image-registry-secret with
+  # key config.json -- both fixed (the controller hard-codes the name for
+  # the build Job's docker-config mount). Populate it via registryCredentials
+  # above; when that is empty, provision image-registry-secret out-of-band.
 
 # Extra args appended to the controller command line.
 extraArgs: []

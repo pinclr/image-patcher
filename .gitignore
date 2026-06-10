@@ -31,6 +31,12 @@ go.work.sum
 # env file
 .env
 
+# Secret Helm values overrides -- real registry passwords etc. Supplied to
+# `helm -f` at deploy time, never committed.
+secret-creds.yaml
+*.secret.yaml
+secret-values*.yaml
+
 # Editor/IDE
 # .idea/
 # .vscode/

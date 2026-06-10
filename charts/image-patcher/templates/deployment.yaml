@@ -148,18 +148,16 @@ spec:
       volumes:
         - name: registry-auth
           secret:
-            # Must exist in the release namespace ({{ .Release.Namespace }}).
-            # The same Secret Kaniko mounts in the build namespace -- if
-            # those are different namespaces (e.g. ysyb: controller in
-            # image-patch-system, builds in oms), the operator must
-            # provision it in both. The Secret is a generic Opaque holding
-            # docker config JSON under a key whose name matches what
-            # Kaniko expects (config.json by default, see
-            # internal/controller/imagepatch_controller.go) -- NOT a
-            # kubernetes.io/dockerconfigjson typed Secret, whose
-            # auto-generated .dockerconfigjson key won't match.
-            secretName: {{ .Values.dedup.dockerConfigSecret | quote }}
+            # image-registry-secret -- the same Opaque Secret Kaniko mounts
+            # in the build namespace, holding docker config JSON under the
+            # config.json key. Populated from registryCredentials (see
+            # templates/registry-auth-secret.yaml) or provisioned
+            # out-of-band. Must exist in the release namespace
+            # ({{ .Release.Namespace }}); when the build namespace differs
+            # (e.g. ysyb: controller in image-patch-system, builds in oms)
+            # it must exist there too.
+            secretName: {{ include "image-patcher.registryAuthSecretName" . | quote }}
             items:
-              - key: {{ .Values.dedup.dockerConfigSecretKey | quote }}
+              - key: config.json
                 path: config.json
       {{- end }}
