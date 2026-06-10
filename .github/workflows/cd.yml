@@ -61,6 +61,7 @@ jobs:
     permissions:
       contents: read
       packages: write # push the chart package to ghcr.io under the repo owner
+      id-token: write # keyless cosign signing via the workflow OIDC identity
     steps:
       - uses: actions/checkout@v4
 
@@ -68,14 +69,24 @@ jobs:
         with:
           version: v3.17.1
 
+      - name: install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: install oras
+        uses: oras-project/setup-oras@v1
+
       - name: log in to GHCR
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" \
             | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | oras login ghcr.io -u ${{ github.actor }} --password-stdin
 
       # Pushes oci://ghcr.io/<owner>/charts/image-patcher:<chart version from
       # Chart.yaml>. Artifact Hub indexes the chart from this OCI reference.
+      # Capture the pushed digest so cosign signs the exact manifest.
       - name: package and push chart to GHCR
+        id: push
         run: |
           dest="${{ runner.temp }}/charts"
           mkdir -p "$dest"
@@ -85,7 +96,33 @@ jobs:
             echo "::error::helm package did not report a packaged file"
             exit 1
           fi
-          helm push "$chart_tgz" "oci://ghcr.io/${{ github.repository_owner }}/charts"
+          push_out=$(helm push "$chart_tgz" "oci://ghcr.io/${{ github.repository_owner }}/charts" 2>&1)
+          echo "$push_out"
+          digest=$(printf '%s\n' "$push_out" | sed -n 's/.*Digest: //p')
+          if [ -z "$digest" ]; then
+            echo "::error::could not parse pushed chart digest"
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      # Sign the pushed chart with cosign (keyless: a short-lived Sigstore/Fulcio
+      # cert bound to this workflow's OIDC identity -- no long-lived keys). The
+      # signature is stored back in GHCR; Artifact Hub detects it and marks the
+      # package Signed.
+      - name: sign chart with cosign (keyless)
+        run: |
+          cosign sign --yes \
+            "ghcr.io/${{ github.repository_owner }}/charts/image-patcher@${{ steps.push.outputs.digest }}"
+
+      # Publish the Artifact Hub repository metadata as an OCI artifact tagged
+      # "artifacthub.io" on the chart repo. Artifact Hub pulls it, matches the
+      # repositoryID, and grants Verified Publisher. Idempotent across releases.
+      - name: publish Artifact Hub repo metadata
+        run: |
+          oras push \
+            "ghcr.io/${{ github.repository_owner }}/charts/image-patcher:artifacthub.io" \
+            --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
+            artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml
 
   # The chart is published to an internal-only ChartMuseum and the private
   # registry push relies on the self-hosted runner's daemon auth + network, so

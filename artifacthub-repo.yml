@@ -1,0 +1,13 @@
+# Artifact Hub repository metadata.
+#
+# Published to the chart's OCI registry as an artifact tagged "artifacthub.io"
+# by .github/workflows/cd.yml. Artifact Hub pulls it, matches repositoryID
+# against the repo it generated in the control panel, and (when they match)
+# grants the Verified Publisher badge.
+#
+# repositoryID comes from the Artifact Hub control panel for this repository.
+# Docs: https://artifacthub.io/docs/topics/repositories/#verified-publisher
+repositoryID: 2a8163af-cdea-4028-93ec-253bee9d197b
+owners:
+  - name: pinclr
+    email: robert@pinclr.com
