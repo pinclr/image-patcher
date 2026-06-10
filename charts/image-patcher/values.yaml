@@ -312,21 +312,23 @@ dashboards:
 
 # Registry credentials, auto-populated into a Secret by the chart.
 #
+# General-purpose creds: Kaniko uses this one Secret for every registry
+# operation in a build -- base-image pull, layer-cache pull/push, and the
+# final push -- and the dedup client reuses it for HEAD/retag. It is not
+# push-only; whether an entry serves pull or push just depends on whether
+# that registry is the source or the destination.
+#
 # List one entry per registry. The chart base64-encodes each
 # username/password into a docker config.json "auths" map and creates
 # the Secret for you -- you no longer hand-create image-registry-secret
-# with `kubectl create secret`.
-#
-# ONE Secret holds every registry's auth. Kaniko (push) and the
-# controller's dedup client read the same Secret and select the matching
-# entry per registry, so different target registries can use different
-# creds and dedup shares the push creds automatically.
+# with `kubectl create secret`. Different source/target registries can
+# each carry their own entry.
 #
 # The Secret is always named image-registry-secret with key config.json
-# (the controller hard-codes the name for the build Job push mount). When
-# config.buildNamespace differs from the release namespace, the chart
-# renders an identical Secret into both so Kaniko (build ns) and the
-# dedup client (release ns) both find it.
+# (the controller hard-codes the name for the build Job's docker-config
+# mount). When config.buildNamespace differs from the release namespace,
+# the chart renders an identical Secret into both so Kaniko (build ns)
+# and the dedup client (release ns) both find it.
 #
 # Leave empty ([]) to keep the legacy behaviour: provision
 # image-registry-secret out-of-band yourself.
@@ -338,7 +340,7 @@ registryCredentials: []
 #    username: robot$ci
 #    password: s3cret
 #  - registry: myacr.azurecr.io
-#    username: pushbot
+#    username: ci-bot
 #    password: hunter2
 
 # Content-addressed build dedup. When on, the controller computes a
@@ -379,8 +381,8 @@ dedup:
   enabled: true
   # The Secret holding docker config JSON is image-registry-secret with
   # key config.json -- both fixed (the controller hard-codes the name for
-  # the build Job push mount). Populate it via registryCredentials above;
-  # when that is empty, provision image-registry-secret out-of-band.
+  # the build Job's docker-config mount). Populate it via registryCredentials
+  # above; when that is empty, provision image-registry-secret out-of-band.
 
 # Extra args appended to the controller command line.
 extraArgs: []

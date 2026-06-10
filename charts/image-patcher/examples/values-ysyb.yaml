@@ -72,7 +72,7 @@ kaniko:
 # Registry creds for luna + Aliyun ACR, auto-populated into
 # image-registry-secret by the chart (key config.json). Builds and the
 # controller both run in image-patch-system here, so the single
-# release-namespace Secret covers both push and dedup. Registries and
+# release-namespace Secret covers pull, push, and dedup. Registries and
 # usernames mirror the Secret currently provisioned in the cluster;
 # supply the passwords from a secret values file / CI store at deploy
 # time -- do NOT commit them.
