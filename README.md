@@ -189,6 +189,8 @@ By default every build uses the chart-level `image-registry-secret` (from `regis
 - **`pullSecret` merges on top** of the push creds (CR `pushSecret` if set, else the chart-level default), with the pull entry winning on per-registry conflicts. Use it to add private base-image creds without restating the push creds.
 - Referencing a missing `pushSecret`/`pullSecret` fails the reconcile (the Secret must already exist in the build namespace), unlike a missing chart-level `image-registry-secret`, which only surfaces when the build pod starts.
 
+> **One credential per registry, used for both pull and push.** A docker `config.json` has a single entry per registry host, and Kaniko uses it for every operation on that host (base-image pull, cache, and push). You therefore cannot give a single registry separate read-only and write-only credentials — whichever wins the merge (the `pullSecret` entry on a conflict) becomes *the* credential for that host. In practice this is fine: a push-capable credential can also pull (the registry push scope includes pull), so for a registry you both pull from and push to, use one push-capable credential (in `registryCredentials` or `pushSecret`) and do not add a competing `pullSecret` entry for it. Genuine read/write separation only works when the base-image source and the push target are **different** registry hosts — then `pushSecret` (target) and `pullSecret` (source) land on distinct `auths` keys and don't collide.
+
 Example: `baseImage: registry.luna.ogpu.cloud/luna/ubuntu-22.04:latest` with `config.defaultImageRegistry=registry.luna.ogpu.cloud/patched-images` produces `registry.luna.ogpu.cloud/patched-images/ubuntu-22.04-patch:latest`.
 
 ### Test manifests
