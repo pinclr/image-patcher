@@ -75,12 +75,20 @@ jobs:
       - name: install oras
         uses: oras-project/setup-oras@v1
 
-      - name: log in to GHCR
+      # Populate ~/.docker/config.json so cosign and oras both authenticate to
+      # GHCR from the shared docker credential store (cosign has no login of
+      # its own). helm uses a separate store, hence the explicit login below.
+      - name: log in to GHCR (docker config, for cosign + oras)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: log in to GHCR (helm registry store)
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" \
             | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
-          echo "${{ secrets.GITHUB_TOKEN }}" \
-            | oras login ghcr.io -u ${{ github.actor }} --password-stdin
 
       # Pushes oci://ghcr.io/<owner>/charts/image-patcher:<chart version from
       # Chart.yaml>. Artifact Hub indexes the chart from this OCI reference.
