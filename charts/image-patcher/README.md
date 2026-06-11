@@ -101,6 +101,19 @@ spec:
 
 Full spec-field reference and credential-precedence rules are in the [repository README](https://github.com/pinclr/image-patcher#imagepatch-crd).
 
+## Verifying the chart signature
+
+Released charts are signed with [cosign](https://github.com/sigstore/cosign) **keyless** in CI — the signature is bound to the GitHub Actions workflow identity via Sigstore, so there is no public key to distribute. Verify a pulled chart against that identity:
+
+```sh
+cosign verify \
+  --certificate-identity-regexp 'https://github.com/pinclr/image-patcher/.github/workflows/cd.yml@.*' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  ghcr.io/pinclr/charts/image-patcher:<version>
+```
+
+A successful verification prints the matched certificate claims; a tampered or unsigned artifact fails non-zero.
+
 ## Source
 
 <https://github.com/pinclr/image-patcher>
