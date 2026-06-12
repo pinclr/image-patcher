@@ -17,9 +17,11 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -46,6 +48,7 @@ import (
 	"image-patch-operator/internal/controller"
 	"image-patch-operator/internal/metrics"
 	"image-patch-operator/internal/registry"
+	"image-patch-operator/internal/tracing"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -121,6 +124,22 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	// Signal-cancellable context shared by tracing shutdown and the manager.
+	ctx := ctrl.SetupSignalHandler()
+
+	// OpenTelemetry tracing. Opt-in via TRACING_ENABLED; otherwise the global
+	// tracer stays the OTel no-op (zero cost). Fail-open: a bad/unreachable
+	// exporter is logged inside Setup and the controller still starts. The
+	// shutdown is always safe to defer.
+	tracingShutdown := tracing.Setup(ctx, tracing.ConfigFromEnv(), setupLog)
+	defer func() {
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := tracingShutdown(sctx); err != nil {
+			setupLog.Error(err, "error flushing traces on shutdown")
+		}
+	}()
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -255,18 +274,18 @@ func main() {
 	}
 
 	if err := (&controller.ImagePatchReconciler{
-		Client:                   mgr.GetClient(),
-		Kubernetes:               kubeClient,
-		Scheme:                   mgr.GetScheme(),
-		DefaultRegistry:          os.Getenv("DEFAULT_IMAGE_REGISTRY"),
-		KanikoImage:              kanikoImage,
-		KanikoBuildCacheRepo:     os.Getenv("KANIKO_BUILD_CACHE_REPO"),
-		BuildNamespace:           os.Getenv("BUILD_NAMESPACE"),
-		DefaultBuildOptions:      controller.BuildOptionsFromEnv(),
-		KanikoResources:          controller.KanikoResourcesFromEnv(setupLog),
-		KanikoRegistryMap:        controller.RegistryMapFromEnv(),
-		DedupEnabled:             dedupEnabled,
-		Registry:                 registryClient,
+		Client:               mgr.GetClient(),
+		Kubernetes:           kubeClient,
+		Scheme:               mgr.GetScheme(),
+		DefaultRegistry:      os.Getenv("DEFAULT_IMAGE_REGISTRY"),
+		KanikoImage:          kanikoImage,
+		KanikoBuildCacheRepo: os.Getenv("KANIKO_BUILD_CACHE_REPO"),
+		BuildNamespace:       os.Getenv("BUILD_NAMESPACE"),
+		DefaultBuildOptions:  controller.BuildOptionsFromEnv(),
+		KanikoResources:      controller.KanikoResourcesFromEnv(setupLog),
+		KanikoRegistryMap:    controller.RegistryMapFromEnv(),
+		DedupEnabled:         dedupEnabled,
+		Registry:             registryClient,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ImagePatch")
 		os.Exit(1)
@@ -291,7 +310,7 @@ func main() {
 	}
 
 	setupLog.Info("starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
