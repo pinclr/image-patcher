@@ -131,7 +131,7 @@ dashboards:
 # registry's retention room to breathe between bursts.
 healthcheck:
   enabled: true
-  schedule: "*/10 * * * *"
+  schedule: "10 * * * *"
   # kubectl image mirrored into the private registry so we don't depend
   # on docker.io reachability per probe run.
   image: registry.luna.ogpu.cloud/image-patch-system/kubectl:1.31
