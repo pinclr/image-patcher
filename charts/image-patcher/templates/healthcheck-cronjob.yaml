@@ -97,7 +97,15 @@ spec:
                       -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.creationTimestamp}{"\n"}{end}' \
                     | while IFS=$(printf '\t') read -r ip_name ip_ts; do
                         [ -z "${ip_name}" ] && continue
-                        ip_epoch=$(date -u -d "${ip_ts}" +%s 2>/dev/null || echo 0)
+                        # BusyBox date -d only accepts "YYYY-MM-DD hh:mm:ss"
+                        # (space separator, no Z), not the RFC3339 form
+                        # Kubernetes emits for creationTimestamp. -D gives
+                        # it a strptime template so T and Z match as
+                        # literal characters. Without this the parse fails,
+                        # the `|| echo 0` fallback masks the error, the
+                        # -gt 0 guard below skips delete, and no canary CR
+                        # is ever GC'd (MSP-121).
+                        ip_epoch=$(date -u -D '%Y-%m-%dT%H:%M:%SZ' -d "${ip_ts}" +%s 2>/dev/null || echo 0)
                         if [ "${ip_epoch}" -lt "${CUTOFF}" ] && [ "${ip_epoch}" -gt 0 ]; then
                           echo "[gc] deleting stale ${ip_name} (created ${ip_ts})"
                           kubectl delete imagepatch -n "${NAMESPACE}" "${ip_name}" --ignore-not-found
