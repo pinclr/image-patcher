@@ -107,6 +107,15 @@ spec:
             - name: KANIKO_REGISTRY_MAP
               value: "{{- $first := true -}}{{- range $target, $mirror := .Values.kaniko.registryMap -}}{{- if not $first -}},{{- end -}}{{- $target -}}={{- $mirror -}}{{- $first = false -}}{{- end -}}"
             {{- end }}
+            {{- with .Values.kaniko.buildAptMirror }}
+            # Build-only apt mirror. The controller passes this to apt-get
+            # via `-o Dir::Etc::SourceList=<tmpfile>` inside a single RUN,
+            # so /etc/apt is never touched and the produced image carries
+            # the base's stock apt sources. Speeds up apt-get install on
+            # clusters where archive.ubuntu.com is slow or unreachable.
+            - name: KANIKO_BUILD_APT_MIRROR
+              value: {{ . | quote }}
+            {{- end }}
             - name: DEDUP_ENABLED
               value: {{ .Values.dedup.enabled | quote }}
             {{- if .Values.dedup.enabled }}

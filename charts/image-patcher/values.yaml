@@ -105,6 +105,22 @@ kaniko:
     # Example -- a placeholder that does not resolve, override per env:
     # docker.io: docker.mirror.example.invalid
 
+  # Build-only apt mirror. The controller drives apt-get update/install
+  # via `-o Dir::Etc::SourceList=/tmp/build-sources.list -o Dir::Etc::SourceParts=/dev/null`
+  # inside a single RUN, so /etc/apt is never touched and the produced
+  # image carries exactly the apt sources its base shipped (no internal
+  # mirror baked in). Use this to speed up apt-get install on clusters
+  # where archive.ubuntu.com is slow or unreachable. Orthogonal to the
+  # per-CR `spec.apt.mirror`, which is the user opting in to BAKE a
+  # mirror INTO the image's /etc/apt/sources.list; both may be set at
+  # once. Empty (the default) leaves the build to read the base image's
+  # stock apt sources.
+  #
+  # Example -- public NetEase (163) Ubuntu mirror, reachable from most
+  # China clusters:
+  #   buildAptMirror: http://mirrors.163.com/ubuntu
+  buildAptMirror: ""
+
   # Resource requirements applied to every Kaniko build container.
   # ephemeral-storage is the critical one: Kaniko extracts the base
   # image into the container rootfs to execute RUN/COPY, so transient
