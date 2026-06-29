@@ -926,8 +926,25 @@ const imageOSCheckCommand = `[ -r /etc/os-release ] || exit 42; ` +
 	`esac`
 
 // GenerateDockerfile generates a Dockerfile from the ImagePatch CR spec.
-// GenerateDockerfile generates a Dockerfile from the ImagePatch CR spec.
+// Wraps generateDockerfile by sourcing the chart-wide build-time apt
+// mirror from the environment. Kept as a thin shim so tests can call
+// generateDockerfile directly with an explicit buildMirror, without
+// having to mutate global env state.
 func GenerateDockerfile(cr *omsv1alpha1.ImagePatch) string {
+	return generateDockerfile(cr, BuildAptMirrorFromEnv())
+}
+
+// generateDockerfile is the pure-function core of Dockerfile emission.
+// buildMirror, when non-empty, is the admin's chart-wide apt mirror used
+// to speed up the kaniko apt-get install RUN via a temp sources file
+// (`apt-get -o Dir::Etc::SourceList=<tmpfile>`) -- written and removed in
+// the same RUN, so /etc/apt is never touched and the produced image
+// carries the base's stock apt sources. Orthogonal to cr.Spec.APT.Mirror,
+// which is the USER opting into baking a mirror into the final image's
+// /etc/apt/sources.list. Both may be set at once: the user mirror is
+// still written to /etc/apt (and persists), but the apt-get invocation
+// itself fetches via the temp file (and the admin mirror).
+func generateDockerfile(cr *omsv1alpha1.ImagePatch, buildMirror string) string {
 	var sb strings.Builder
 
 	// FROM (extra stages) - emitted before the base image so kaniko parses
@@ -1034,13 +1051,44 @@ func GenerateDockerfile(cr *omsv1alpha1.ImagePatch) string {
 		// -q silences the per-line Get:/Hit:/Reading… progress chatter
 		// from both update and install. We don't go to -qq because that
 		// also implies --yes and we like the explicit -y signal.
-		sb.WriteString("RUN apt-get -q update && apt-get -q install -y \\\n")
-		sb.WriteString("    -o Dpkg::Options::=\"--force-confdef\" \\\n")
-		sb.WriteString("    -o Dpkg::Options::=\"--force-confold\" \\\n")
-		for _, pkg := range cr.Spec.APT.Install {
-			sb.WriteString(fmt.Sprintf("    %s \\\n", pkg))
+		//
+		// When buildMirror is set (chart-wide admin acceleration), the
+		// install RUN writes a temp /tmp/build-sources.list, drives both
+		// apt-get update and apt-get install via
+		// `-o Dir::Etc::SourceList=<tmp> -o Dir::Etc::SourceParts=/dev/null`,
+		// then deletes the temp file -- all in one RUN, so kaniko's
+		// end-of-RUN snapshot sees no /tmp leftover and /etc/apt is
+		// untouched (the produced image's apt sources stay whatever the
+		// base shipped, plus whatever cr.Spec.APT.Mirror baked in above).
+		// SourceParts=/dev/null suppresses sources.list.d so noble's
+		// deb822 ubuntu.sources isn't read in parallel (which would fan
+		// the build back out to archive.ubuntu.com and defeat the
+		// speedup).
+		if buildMirror != "" {
+			sb.WriteString("RUN . /etc/os-release && printf \"")
+			sb.WriteString(fmt.Sprintf("deb %s $VERSION_CODENAME main restricted universe multiverse\\n\\\n", buildMirror))
+			for _, suffix := range []string{"-updates", "-security", "-backports"} {
+				sb.WriteString(fmt.Sprintf("deb %s $VERSION_CODENAME%s main restricted universe multiverse\\n\\\n", buildMirror, suffix))
+			}
+			sb.WriteString("\" > /tmp/build-sources.list && \\\n")
+			sb.WriteString("    apt-get -o Dir::Etc::SourceList=/tmp/build-sources.list -o Dir::Etc::SourceParts=/dev/null -q update && \\\n")
+			sb.WriteString("    apt-get -o Dir::Etc::SourceList=/tmp/build-sources.list -o Dir::Etc::SourceParts=/dev/null -q install -y \\\n")
+			sb.WriteString("    -o Dpkg::Options::=\"--force-confdef\" \\\n")
+			sb.WriteString("    -o Dpkg::Options::=\"--force-confold\" \\\n")
+			for _, pkg := range cr.Spec.APT.Install {
+				sb.WriteString(fmt.Sprintf("    %s \\\n", pkg))
+			}
+			sb.WriteString("    && rm -rf /var/lib/apt/lists/* \\\n")
+			sb.WriteString("    && rm -f /tmp/build-sources.list\n\n")
+		} else {
+			sb.WriteString("RUN apt-get -q update && apt-get -q install -y \\\n")
+			sb.WriteString("    -o Dpkg::Options::=\"--force-confdef\" \\\n")
+			sb.WriteString("    -o Dpkg::Options::=\"--force-confold\" \\\n")
+			for _, pkg := range cr.Spec.APT.Install {
+				sb.WriteString(fmt.Sprintf("    %s \\\n", pkg))
+			}
+			sb.WriteString("    && rm -rf /var/lib/apt/lists/*\n\n")
 		}
-		sb.WriteString("    && rm -rf /var/lib/apt/lists/*\n\n")
 	}
 
 	// PIP - install Python packages
@@ -1127,6 +1175,21 @@ func GenerateDockerfile(cr *omsv1alpha1.ImagePatch) string {
 	}
 
 	return sb.String()
+}
+
+// BuildAptMirrorFromEnv reads the chart-wide build-time apt mirror from
+// KANIKO_BUILD_APT_MIRROR. Admin's escape hatch to speed up the apt-get
+// install inside kaniko on clusters where archive.ubuntu.com is slow or
+// unreachable, WITHOUT modifying /etc/apt in the produced image: the
+// mirror is consumed by generateDockerfile as a temp /tmp/build-sources.list
+// driven by `apt-get -o Dir::Etc::SourceList=<tmpfile>` inside a single
+// RUN that also deletes the file at the end, so kaniko's snapshot at the
+// end of the RUN sees zero trace. Orthogonal to cr.Spec.APT.Mirror, which
+// is the user opting in to bake a mirror into the final image's
+// /etc/apt/sources.list. Empty (default) leaves the build to read the
+// base image's stock apt sources.
+func BuildAptMirrorFromEnv() string {
+	return strings.TrimSpace(os.Getenv("KANIKO_BUILD_APT_MIRROR"))
 }
 
 // BuildOptionsFromEnv reads the chart-wide build option defaults from

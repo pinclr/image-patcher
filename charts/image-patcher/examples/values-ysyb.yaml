@@ -69,6 +69,14 @@ kaniko:
     quay.io: quay.m.daocloud.io
     ghcr.io: ghcr.m.daocloud.io
 
+  # Build-only apt mirror -- accelerates apt-get install during kaniko
+  # builds without baking the mirror into the produced image. Public
+  # NetEase mirror is reachable from this cluster (same connectivity
+  # envelope as the DaoCloud registryMap above). Independent of any
+  # per-CR spec.apt.mirror that oms-controller may inject; this one is
+  # always temporary.
+  buildAptMirror: http://10.11.32.173/ubuntu
+
 # Registry creds for luna + Aliyun ACR, auto-populated into
 # image-registry-secret by the chart (key config.json). Builds and the
 # controller both run in image-patch-system here, so the single

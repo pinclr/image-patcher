@@ -87,6 +87,110 @@ RUN apt-get -q update && apt-get -q install -y \
 	}
 }
 
+// TestDockerfileGenBuildMirrorOnly locks the contract that the chart-wide
+// build-time apt mirror (KANIKO_BUILD_APT_MIRROR / generateDockerfile's
+// buildMirror argument), when set without the per-CR user mirror, routes
+// apt-get through a temp /tmp/build-sources.list -- never touching
+// /etc/apt -- and cleans the temp file inside the same RUN so kaniko's
+// end-of-RUN snapshot sees zero trace. SourceParts is pinned to
+// /dev/null so noble's deb822 ubuntu.sources isn't read in parallel.
+func TestDockerfileGenBuildMirrorOnly(t *testing.T) {
+	cr := &v1alpha1.ImagePatch{
+		Spec: v1alpha1.ImagePatchSpec{
+			BaseImage: "ubuntu:24.04",
+			APT: &v1alpha1.AptConfig{
+				Install: []string{"tini", "podman"},
+			},
+		},
+	}
+
+	got := generateDockerfile(cr, "http://mirrors.163.com/ubuntu")
+
+	want := `FROM ubuntu:24.04
+
+SHELL ["/bin/sh", "-c"]
+
+USER root
+
+RUN ` + imageOSCheckCommand + `
+
+RUN . /etc/os-release && printf "deb http://mirrors.163.com/ubuntu $VERSION_CODENAME main restricted universe multiverse\n\
+deb http://mirrors.163.com/ubuntu $VERSION_CODENAME-updates main restricted universe multiverse\n\
+deb http://mirrors.163.com/ubuntu $VERSION_CODENAME-security main restricted universe multiverse\n\
+deb http://mirrors.163.com/ubuntu $VERSION_CODENAME-backports main restricted universe multiverse\n\
+" > /tmp/build-sources.list && \
+    apt-get -o Dir::Etc::SourceList=/tmp/build-sources.list -o Dir::Etc::SourceParts=/dev/null -q update && \
+    apt-get -o Dir::Etc::SourceList=/tmp/build-sources.list -o Dir::Etc::SourceParts=/dev/null -q install -y \
+    -o Dpkg::Options::="--force-confdef" \
+    -o Dpkg::Options::="--force-confold" \
+    tini \
+    podman \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f /tmp/build-sources.list
+
+`
+
+	if got != want {
+		t.Errorf("Dockerfile mismatch with build mirror only:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+// TestDockerfileGenBuildMirrorAndUserMirror locks the contract that when
+// BOTH knobs are set, the user mirror still writes to /etc/apt (so it
+// bakes into the final image), but the actual apt-get update/install in
+// the same Dockerfile routes through the temp /tmp/build-sources.list
+// driven by the admin's build mirror. Final image's /etc/apt/sources.list
+// reflects the user's mirror; the build itself fetches via the admin
+// mirror.
+func TestDockerfileGenBuildMirrorAndUserMirror(t *testing.T) {
+	cr := &v1alpha1.ImagePatch{
+		Spec: v1alpha1.ImagePatchSpec{
+			BaseImage: "ubuntu:24.04",
+			APT: &v1alpha1.AptConfig{
+				Mirror:  "http://10.11.32.173/ubuntu",
+				Install: []string{"tini", "podman"},
+			},
+		},
+	}
+
+	got := generateDockerfile(cr, "http://mirrors.163.com/ubuntu")
+
+	want := `FROM ubuntu:24.04
+
+SHELL ["/bin/sh", "-c"]
+
+USER root
+
+RUN ` + imageOSCheckCommand + `
+
+RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources && \
+    . /etc/os-release && printf "deb http://10.11.32.173/ubuntu $VERSION_CODENAME main restricted universe multiverse\n\
+deb http://10.11.32.173/ubuntu $VERSION_CODENAME-updates main restricted universe multiverse\n\
+deb http://10.11.32.173/ubuntu $VERSION_CODENAME-security main restricted universe multiverse\n\
+deb http://10.11.32.173/ubuntu $VERSION_CODENAME-backports main restricted universe multiverse\n\
+" > /etc/apt/sources.list
+
+RUN . /etc/os-release && printf "deb http://mirrors.163.com/ubuntu $VERSION_CODENAME main restricted universe multiverse\n\
+deb http://mirrors.163.com/ubuntu $VERSION_CODENAME-updates main restricted universe multiverse\n\
+deb http://mirrors.163.com/ubuntu $VERSION_CODENAME-security main restricted universe multiverse\n\
+deb http://mirrors.163.com/ubuntu $VERSION_CODENAME-backports main restricted universe multiverse\n\
+" > /tmp/build-sources.list && \
+    apt-get -o Dir::Etc::SourceList=/tmp/build-sources.list -o Dir::Etc::SourceParts=/dev/null -q update && \
+    apt-get -o Dir::Etc::SourceList=/tmp/build-sources.list -o Dir::Etc::SourceParts=/dev/null -q install -y \
+    -o Dpkg::Options::="--force-confdef" \
+    -o Dpkg::Options::="--force-confold" \
+    tini \
+    podman \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f /tmp/build-sources.list
+
+`
+
+	if got != want {
+		t.Errorf("Dockerfile mismatch with build mirror + user mirror:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
 // TestDockerfileGenRunAsUser locks the contract that RunAsUser emits
 // exactly two lines -- a getent-passwd existence check that fails
 // with the user-facing "User <name> does not exist!" message, then

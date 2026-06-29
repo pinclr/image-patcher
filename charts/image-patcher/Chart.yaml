@@ -2,8 +2,8 @@ apiVersion: v2
 name: image-patcher
 description: Helm chart for image-patch-operator, a Kubernetes operator that builds patched container images from ImagePatch CRs using Kaniko.
 type: application
-version: 0.3.48
-appVersion: "v0.1.53"
+version: 0.3.51
+appVersion: "v0.1.56"
 kubeVersion: ">=1.21.0-0"
 home: https://github.com/pinclr/image-patcher
 keywords:
@@ -33,9 +33,7 @@ annotations:
   # Images listed here are scanned for vulnerabilities by Artifact Hub.
   artifacthub.io/images: |
     - name: image-patcher-operator
-      image: ghcr.io/pinclr/image-patcher-operator:v0.1.53
+      image: ghcr.io/pinclr/image-patcher-operator:v0.1.56
   artifacthub.io/changes: |
-    - kind: added
-      description: LICENSE, SECURITY policy, CONTRIBUTING, CODE_OF_CONDUCT, and GOVERNANCE docs
-    - kind: added
-      description: Artifact Hub metadata (license, operator, images, links, maintainers)
+    - kind: changed
+      description: kaniko.buildAptMirror -- revert to per-command -o Dir::Etc::SourceList flags on the spec.apt.install RUN, keeping temp sources file scoped to that single RUN and /etc/apt untouched
