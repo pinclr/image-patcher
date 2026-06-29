@@ -116,6 +116,13 @@ spec:
             - name: KANIKO_BUILD_APT_MIRROR
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.kaniko.buildPypiMirror }}
+            # Build-only PyPI mirror. The controller passes this to pip via
+            # --index-url and --trusted-host inline, so no pip.conf is
+            # written and the produced image carries no mirror baked in.
+            - name: KANIKO_BUILD_PYPI_MIRROR
+              value: {{ . | quote }}
+            {{- end }}
             - name: DEDUP_ENABLED
               value: {{ .Values.dedup.enabled | quote }}
             {{- if .Values.dedup.enabled }}
