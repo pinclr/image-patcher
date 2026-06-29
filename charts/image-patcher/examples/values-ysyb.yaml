@@ -76,6 +76,7 @@ kaniko:
   # per-CR spec.apt.mirror that oms-controller may inject; this one is
   # always temporary.
   buildAptMirror: http://10.11.32.173/ubuntu
+  buildPypiMirror: https://pypi.tuna.tsinghua.edu.cn/simple
 
 # Registry creds for luna + Aliyun ACR, auto-populated into
 # image-registry-secret by the chart (key config.json). Builds and the
