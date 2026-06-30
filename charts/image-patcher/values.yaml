@@ -121,6 +121,19 @@ kaniko:
   #   buildAptMirror: http://mirrors.163.com/ubuntu
   buildAptMirror: ""
 
+  # Chart-wide build-time PyPI mirror. When set, pip install inside
+  # kaniko uses --index-url <mirror> --trusted-host <host>, accelerating
+  # package downloads without baking any pip config into the produced
+  # image (the flag is passed inline, no pip.conf or environment variable
+  # is written). Orthogonal to any pip.conf the user bakes in via
+  # fromImages or shell steps. Empty (the default) leaves pip pointing at
+  # the upstream pypi.org index.
+  #
+  # Example -- Tsinghua University TUNA mirror, widely reachable from
+  # China clusters:
+  #   buildPypiMirror: https://pypi.tuna.tsinghua.edu.cn/simple
+  buildPypiMirror: ""
+
   # Resource requirements applied to every Kaniko build container.
   # ephemeral-storage is the critical one: Kaniko extracts the base
   # image into the container rootfs to execute RUN/COPY, so transient

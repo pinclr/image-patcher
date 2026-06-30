@@ -104,7 +104,7 @@ func TestDockerfileGenBuildMirrorOnly(t *testing.T) {
 		},
 	}
 
-	got := generateDockerfile(cr, "http://mirrors.163.com/ubuntu")
+	got := generateDockerfile(cr, "http://mirrors.163.com/ubuntu", "")
 
 	want := `FROM ubuntu:24.04
 
@@ -153,7 +153,7 @@ func TestDockerfileGenBuildMirrorAndUserMirror(t *testing.T) {
 		},
 	}
 
-	got := generateDockerfile(cr, "http://mirrors.163.com/ubuntu")
+	got := generateDockerfile(cr, "http://mirrors.163.com/ubuntu", "")
 
 	want := `FROM ubuntu:24.04
 
@@ -273,5 +273,77 @@ RUN true
 
 	if got != want {
 		t.Errorf("Dockerfile mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+// TestDockerfileGenBuildPypiMirror locks the contract that the chart-wide
+// build-time PyPI mirror (KANIKO_BUILD_PYPI_MIRROR / generateDockerfile's
+// pypiMirror argument), when set, routes pip install through --index-url
+// and --trusted-host inline -- no pip.conf is written, so the produced
+// image carries the base's stock pip configuration unchanged.
+func TestDockerfileGenBuildPypiMirror(t *testing.T) {
+	cr := &v1alpha1.ImagePatch{
+		Spec: v1alpha1.ImagePatchSpec{
+			BaseImage: "ubuntu:24.04",
+			PIP: &v1alpha1.PipConfig{
+				Install: []string{"numpy", "pandas"},
+			},
+		},
+	}
+
+	got := generateDockerfile(cr, "", "https://pypi.tuna.tsinghua.edu.cn/simple")
+
+	want := `FROM ubuntu:24.04
+
+SHELL ["/bin/sh", "-c"]
+
+USER root
+
+RUN ` + imageOSCheckCommand + `
+
+RUN pip install --no-cache-dir \
+    --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+    numpy \
+    pandas
+
+`
+
+	if got != want {
+		t.Errorf("Dockerfile mismatch with pypi build mirror:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+// TestDockerfileGenBuildPypiMirrorHTTP locks the contract that an HTTP
+// PyPI mirror gets --trusted-host injected (pip refuses HTTP without it),
+// while an HTTPS mirror does not (preserving certificate verification).
+func TestDockerfileGenBuildPypiMirrorHTTP(t *testing.T) {
+	cr := &v1alpha1.ImagePatch{
+		Spec: v1alpha1.ImagePatchSpec{
+			BaseImage: "ubuntu:24.04",
+			PIP: &v1alpha1.PipConfig{
+				Install: []string{"numpy"},
+			},
+		},
+	}
+
+	got := generateDockerfile(cr, "", "http://10.11.32.173/pypi/simple")
+
+	want := `FROM ubuntu:24.04
+
+SHELL ["/bin/sh", "-c"]
+
+USER root
+
+RUN ` + imageOSCheckCommand + `
+
+RUN pip install --no-cache-dir \
+    --index-url http://10.11.32.173/pypi/simple \
+    --trusted-host 10.11.32.173 \
+    numpy
+
+`
+
+	if got != want {
+		t.Errorf("Dockerfile mismatch with HTTP pypi build mirror:\n--- got ---\n%s\n--- want ---\n%s", got, want)
 	}
 }

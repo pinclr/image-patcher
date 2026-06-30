@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -931,7 +932,7 @@ const imageOSCheckCommand = `[ -r /etc/os-release ] || exit 42; ` +
 // generateDockerfile directly with an explicit buildMirror, without
 // having to mutate global env state.
 func GenerateDockerfile(cr *omsv1alpha1.ImagePatch) string {
-	return generateDockerfile(cr, BuildAptMirrorFromEnv())
+	return generateDockerfile(cr, BuildAptMirrorFromEnv(), BuildPypiMirrorFromEnv())
 }
 
 // generateDockerfile is the pure-function core of Dockerfile emission.
@@ -944,7 +945,10 @@ func GenerateDockerfile(cr *omsv1alpha1.ImagePatch) string {
 // /etc/apt/sources.list. Both may be set at once: the user mirror is
 // still written to /etc/apt (and persists), but the apt-get invocation
 // itself fetches via the temp file (and the admin mirror).
-func generateDockerfile(cr *omsv1alpha1.ImagePatch, buildMirror string) string {
+// pypiMirror, when non-empty, is the admin's chart-wide PyPI mirror used
+// to speed up pip install via --index-url and --trusted-host inline --
+// no pip.conf is written, so the produced image carries no mirror baked in.
+func generateDockerfile(cr *omsv1alpha1.ImagePatch, buildMirror string, pypiMirror string) string {
 	var sb strings.Builder
 
 	// FROM (extra stages) - emitted before the base image so kaniko parses
@@ -1093,8 +1097,27 @@ func generateDockerfile(cr *omsv1alpha1.ImagePatch, buildMirror string) string {
 
 	// PIP - install Python packages
 	if cr.Spec.PIP != nil && len(cr.Spec.PIP.Install) > 0 {
-		sb.WriteString(fmt.Sprintf("RUN pip install --no-cache-dir %s\n\n",
-			strings.Join(cr.Spec.PIP.Install, " ")))
+		if pypiMirror != "" {
+			// --trusted-host is only added for HTTP mirrors; HTTPS mirrors
+			// retain normal certificate verification.
+			u, _ := url.Parse(pypiMirror)
+			sb.WriteString("RUN pip install --no-cache-dir \\\n")
+			sb.WriteString(fmt.Sprintf("    --index-url %s \\\n", pypiMirror))
+			if u.Scheme == "http" {
+				sb.WriteString(fmt.Sprintf("    --trusted-host %s \\\n", u.Hostname()))
+			}
+			pkgs := cr.Spec.PIP.Install
+			for i, pkg := range pkgs {
+				if i < len(pkgs)-1 {
+					sb.WriteString(fmt.Sprintf("    %s \\\n", pkg))
+				} else {
+					sb.WriteString(fmt.Sprintf("    %s\n\n", pkg))
+				}
+			}
+		} else {
+			sb.WriteString(fmt.Sprintf("RUN pip install --no-cache-dir %s\n\n",
+				strings.Join(cr.Spec.PIP.Install, " ")))
+		}
 	}
 
 	// USER - create and configure user
@@ -1190,6 +1213,16 @@ func generateDockerfile(cr *omsv1alpha1.ImagePatch, buildMirror string) string {
 // base image's stock apt sources.
 func BuildAptMirrorFromEnv() string {
 	return strings.TrimSpace(os.Getenv("KANIKO_BUILD_APT_MIRROR"))
+}
+
+// BuildPypiMirrorFromEnv reads the chart-wide build-time PyPI mirror from
+// KANIKO_BUILD_PYPI_MIRROR. Admin's escape hatch to speed up pip install
+// inside kaniko on clusters where pypi.org is slow or unreachable, without
+// writing any pip.conf into the produced image: the mirror is passed inline
+// via --index-url and --trusted-host so kaniko's snapshot sees no trace.
+// Empty (default) leaves pip pointing at the upstream pypi.org index.
+func BuildPypiMirrorFromEnv() string {
+	return strings.TrimSpace(os.Getenv("KANIKO_BUILD_PYPI_MIRROR"))
 }
 
 // BuildOptionsFromEnv reads the chart-wide build option defaults from
