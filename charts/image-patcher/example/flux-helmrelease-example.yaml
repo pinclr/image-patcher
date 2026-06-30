@@ -1,7 +1,7 @@
-# Flux HelmRelease for the image-patcher chart, sourced from the in-cluster
-# ChartMuseum at http://10.11.32.176:8080. The .spec.values block mirrors
-# charts/image-patcher/examples/values-ysyb.yaml so this manifest and the
-# direct `helm upgrade -f values-ysyb.yaml` path produce equivalent releases.
+# Flux HelmRelease for the image-patcher chart, sourced from an in-cluster
+# ChartMuseum at http://chartmuseum.example.com:8080. The .spec.values block
+# mirrors charts/image-patcher/values-example.yaml so this manifest and the
+# direct `helm upgrade -f values-example.yaml` path produce equivalent releases.
 #
 # Apply in order: Secret, HelmRepository, HelmRelease (a single
 # `kubectl apply -f` handles them since Flux retries until dependencies
@@ -34,7 +34,7 @@ metadata:
   namespace: image-patch-system
 spec:
   interval: 5m
-  url: http://10.11.32.176:8080
+  url: http://chartmuseum.example.com:8080
   secretRef:
     name: chartmuseum-auth
 ---
@@ -70,22 +70,22 @@ spec:
       strategy: rollback
   values:
     image:
-      registry: registry.luna.ogpu.cloud
+      registry: registry.example.com
       # This private registry namespaces repos under a project, so override the
       # flat chart default with the image-patch-system/ prefix used at build time.
       repository: image-patch-system/image-patcher-operator
       # tag defaults to .Chart.AppVersion (v0.1.5 for chart 0.1.5)
     kaniko:
       image:
-        registry: registry.luna.ogpu.cloud
+        registry: registry.example.com
         repository: image-patch-system/kaniko-executor
       # Build cache: Kaniko's intermediate RUN-layer cache. The cache repo
       # is automatically set to config.defaultImageRegistry.
       buildCache:
         enabled: true
     config:
-      defaultImageRegistry: registry.luna.ogpu.cloud/patched-images
-    # Prometheus Operator scrape config. The ysyb cluster runs kps with a
+      defaultImageRegistry: registry.example.com/patched-images
+    # Prometheus Operator scrape config. This example cluster runs kps with a
     # custom Prometheus SA name and the standard release-label selector;
     # both overrides go in here instead of relying on chart defaults.
     metrics:
@@ -95,5 +95,5 @@ spec:
           release: kube-prometheus-stack
         prometheus:
           serviceAccount:
-            name: k8s-prometheus
+            name: prometheus-sa
             namespace: monitoring

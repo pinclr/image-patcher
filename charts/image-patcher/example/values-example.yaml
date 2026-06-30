@@ -283,7 +283,7 @@ healthcheck:
   # cases x len(baseImages) sequentially (3 real builds + 1 short-
   # circuit per base). Hourly is conservative -- envs that want
   # faster metric movement on dashboards should override to "*/10 *
-  # * * *" (see examples/values-ysyb.yaml). Per-tick dedup tag
+  # * * *". Per-tick dedup tag
   # writes = 1 per base per tick, set retention on the target repo
   # accordingly.
   schedule: "0 * * * *"
@@ -300,7 +300,7 @@ healthcheck:
   # jammy). Pick refs reachable from the cluster's build pods --
   # the docker.io default below works only on clusters that can pull
   # from docker.io; air-gapped envs should override with internal
-  # mirror refs (see examples/values-ysyb.yaml).
+  # mirror refs.
   baseImages:
     - ubuntu:22.04
   # targetImage is used as a stem; the probe writes per-case stable
@@ -365,7 +365,7 @@ dashboards:
 # NOTE: these are plaintext creds in values -- supply them from a secret
 # values file / CI secret store, not a committed values.yaml.
 registryCredentials: []
-#  - registry: registry.luna.ogpu.cloud
+#  - registry: registry.example.com
 #    username: robot$ci
 #    password: s3cret
 #  - registry: myacr.azurecr.io
