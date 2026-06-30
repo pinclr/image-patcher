@@ -72,7 +72,7 @@ Per-build overrides are available on the CR via `spec.pushSecret` / `spec.pullSe
 | `config.buildNamespace` | `image-patch-system` | Namespace where Kaniko build Jobs and ConfigMaps land. |
 | `registryCredentials` | `[]` | Registry `{registry, username, password}` pairs; auto-populated into `image-registry-secret`. |
 | `dedup.enabled` | `true` | Content-addressed build dedup (HEAD + manifest retag short-circuit). |
-| `kaniko.image` | _see values.yaml_ | Kaniko executor image. |
+| `kaniko.image` | _see values-example.yaml_ | Kaniko executor image. |
 | `kaniko.buildCache.enabled` | `true` | Reuse intermediate `RUN` layers via a registry cache repo. |
 | `kaniko.registryMap` | `{}` | `<target>=<mirror>` pull-through mirrors for base-image fetches. |
 | `replicaCount` | `3` | Controller replicas (leader-elected). |
@@ -80,7 +80,7 @@ Per-build overrides are available on the CR via `spec.pushSecret` / `spec.pullSe
 | `healthcheck.enabled` | `false` | Synthetic canary CronJob exercising the build path. |
 | `dashboards.enabled` | `false` | Bundle a Grafana dashboard ConfigMap for the sidecar. |
 
-The full, commented set of values lives in [`values.yaml`](./values.yaml); `examples/` shows a complete private-registry deployment.
+The full, commented set of values lives in [`examples/values-example.yaml`](./examples/values-example.yaml), a complete private-registry deployment.
 
 ## The ImagePatch CR
 

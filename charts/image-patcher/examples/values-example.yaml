@@ -1,4 +1,7 @@
-# Default values for image-patcher chart.
+# Example values for the image-patcher chart. Mirrors the chart's full set of
+# options with a complete, sanitized private-registry deployment filled in;
+# CI lints/templates the chart against this file. Replace the example.com
+# placeholders with your real registry before deploying.
 
 # nameOverride / fullnameOverride control resource naming.
 # fullnameOverride defaults to "image-patch-operator" so resource names match
@@ -12,7 +15,7 @@ fullnameOverride: "image-patch-operator"
 # image.registry is REQUIRED (enforced by values.schema.json) so we never
 # accidentally pull from docker.io.
 image:
-  registry: ""
+  registry: registry.example.com
   repository: image-patcher-operator
   tag: ""
   pullPolicy: IfNotPresent
