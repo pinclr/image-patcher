@@ -168,7 +168,7 @@ sync-crds: manifests ## Copy generated CRDs from config/crd/bases/ into the char
 
 # Example values used to satisfy the chart's values.schema.json during dev.
 # Override with VALUES=path/to/your/values.yaml on the command line.
-VALUES ?= $(CHART_DIR)/examples/values-ysyb.yaml
+VALUES ?= $(CHART_DIR)/examples/values-example.yaml
 
 .PHONY: helm-lint
 helm-lint: ## Lint the Helm chart against $(VALUES).
