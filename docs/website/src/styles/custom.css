@@ -1,11 +1,11 @@
-/* Make all three columns percentage-based so the whole layout flows with the
-   viewport. --sl-sidebar-width drives the left nav *and* the content's left
-   offset (both resolve as a % of the viewport, so they stay in sync);
-   --toc-width drives the right table of contents; the content pane fills the
-   rest. Unlayered rules win over Starlight's @layer starlight.core styles. */
+/* Use vw units so all three columns resolve against the same reference
+   (the viewport), regardless of which containing block each element is in.
+   The right-sidebar panel is position:fixed so percentages there resolve
+   against the viewport, not the flex container — vw avoids that mismatch.
+   Unlayered rules win over Starlight's @layer starlight.core styles. */
 :root {
-  --sl-sidebar-width: 18%;
-  --toc-width: 12%;
+  --sl-sidebar-width: 18vw;  /* left nav */
+  --toc-width: 12vw;         /* right TOC */
 }
 
 @media (min-width: 72rem) {
