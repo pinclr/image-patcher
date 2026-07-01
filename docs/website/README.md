@@ -26,6 +26,8 @@ Output goes to `docs/website/dist/`.
 npm run preview
 ```
 
+> **Note:** The search box is only available in production builds (it relies on a Pagefind index generated at build time). To test search locally, run `npm run build` first, then `npm run preview`.
+
 ## Deployment
 
 ### Vercel
