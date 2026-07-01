@@ -29,6 +29,14 @@
     max-width: none;
   }
 
+  /* Pin the fixed sidebar to the right edge of the viewport with an explicit
+     width. Without this, the fixed element's width: 100% = 100vw starting from
+     ~88vw, causing it to extend to 188vw and overflow the window. */
+  .right-sidebar {
+    right: 0;
+    width: var(--toc-width);
+  }
+
   .right-sidebar-panel {
     width: calc(var(--toc-width) - 2 * var(--sl-sidebar-pad-x));
   }
