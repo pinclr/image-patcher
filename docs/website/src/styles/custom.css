@@ -1,0 +1,34 @@
+/* Narrow the right-hand table-of-contents to 3/5 of its default width.
+   Starlight derives the right TOC column from --sl-sidebar-width (shared with
+   the left nav), so we introduce a dedicated --toc-width and re-run the layout
+   calcs for just the right column. Unlayered rules override Starlight's
+   @layer starlight.core styles. */
+:root {
+  /* 3/5 of the default 18.75rem sidebar width. */
+  --toc-width: 11.25rem;
+}
+
+@media (min-width: 72rem) {
+  .right-sidebar-container {
+    width: calc(
+      var(--toc-width) + (100% - var(--sl-content-width) - var(--toc-width)) / 2
+    );
+  }
+
+  [data-has-sidebar][data-has-toc] .main-pane {
+    width: calc(
+      var(--sl-content-width) + (100% - var(--sl-content-width) - var(--toc-width)) / 2
+    );
+  }
+
+  .right-sidebar-panel {
+    width: calc(var(--toc-width) - 2 * var(--sl-sidebar-pad-x));
+  }
+}
+
+/* Overview page: drop the hero's large vertical padding so the title sits near
+   the top, aligned with the h1 on the other (non-splash) pages. */
+.hero {
+  padding-top: 0;
+  padding-bottom: 1.5rem;
+}
