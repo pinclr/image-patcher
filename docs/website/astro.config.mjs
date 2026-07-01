@@ -3,9 +3,17 @@ import starlight from '@astrojs/starlight';
 
 export default defineConfig({
   prefetch: true,
+  vite: {
+    preview: {
+      allowedHosts: ['mink-trusted-vigorously.ngrok-free.app'],
+    },
+  },
   integrations: [
     starlight({
       title: 'image-patch-operator',
+      components: {
+        Head: './src/components/Head.astro',
+      },
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/pinclr/image-patcher' },
       ],
