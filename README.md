@@ -2,6 +2,8 @@
 
 A Kubernetes operator that patches container images declaratively using the `ImagePatch` CRD. It generates a Dockerfile from the CR spec and builds the patched image in-cluster using [Kaniko](https://github.com/GoogleContainerTools/kaniko).
 
+[中文文档](docs/zh/README.md)
+
 ## Description
 
 image-patch-operator lets you define image customizations (apt packages, shell commands, environment variables, entrypoint, etc.) as a Kubernetes custom resource. The controller watches `ImagePatch` resources, generates a Dockerfile, and launches a Kaniko job to build and push the patched image to a container registry.
@@ -40,7 +42,9 @@ config:
   defaultImageRegistry: registry.example.com/patched-images   # destination for built images; optional if every ImagePatch sets spec.targetImage
 ```
 
-`image.repository` defaults to `image-patcher-operator` and `image.tag` to the chart's `appVersion`, so the values above resolve to `ghcr.io/pinclr/image-patcher-operator:<appVersion>`. Other defaults you usually do not need to touch live in `charts/image-patcher/values.yaml`; the bundled `charts/image-patcher/examples/` show a private-registry setup.
+`image.repository` defaults to `image-patcher-operator` and `image.tag` to the chart's `appVersion`, so the values above resolve to `ghcr.io/pinclr/image-patcher-operator:<appVersion>`. The full, commented set of defaults lives in [`charts/image-patcher/examples/values-example.yaml`](charts/image-patcher/examples/values-example.yaml) — a complete private-registry deployment you can adapt and use as your values file. There is no root `values.yaml` in the chart, so `helm install` without `-f` will fail; start from the example file.
+
+For Flux users, [`charts/image-patcher/examples/flux-helmrelease-example.yaml`](charts/image-patcher/examples/flux-helmrelease-example.yaml) shows a complete `HelmRepository` + `HelmRelease` manifest sourcing the chart from an in-cluster ChartMuseum.
 
 #### Registry credentials
 
@@ -92,10 +96,12 @@ To run a self-built controller image — e.g. for an air-gapped or private regis
 ```sh
 make docker-build docker-push IMAGE_REGISTRIES="registry.example.com/myns"
 helm install image-patch ./charts/image-patcher \
-  -n image-patch-system --create-namespace -f my-values.yaml
+  -n image-patch-system --create-namespace \
+  -f charts/image-patcher/examples/values-example.yaml \
+  -f my-overrides.yaml
 ```
 
-Built artifact: `registry.example.com/myns/image-patcher-operator:<appVersion>`. `IMAGE_REGISTRIES` is space-separated to publish to several registries at once; add `IMAGE_EXTRA_TAGS=latest` for extra tags, or override `IMAGE_REPOSITORY`/`PLATFORM` to change the path or target architecture. Set `my-values.yaml`'s `image.registry` (and `image.repository` if you overrode it) to match what you pushed.
+Built artifact: `registry.example.com/myns/image-patcher-operator:<appVersion>`. `IMAGE_REGISTRIES` is space-separated to publish to several registries at once; add `IMAGE_EXTRA_TAGS=latest` for extra tags, or override `IMAGE_REPOSITORY`/`PLATFORM` to change the path or target architecture. Set `my-overrides.yaml`'s `image.registry` (and `image.repository` if you overrode it) to match what you pushed.
 
 ### Upgrade
 
@@ -161,7 +167,7 @@ spec:
 | `pushSecret` | string | no | Name of a Secret in the build namespace whose docker config **replaces** the chart-level `image-registry-secret` as the push creds for this build. Use when the target registry needs creds the chart-level Secret lacks. Secret may be `kubernetes.io/dockerconfigjson` or carry a `config.json` key. |
 | `pullSecret` | string | no | Name of a Secret in the build namespace whose auths are **merged on top** of the push creds, so this build can pull a private base image while still pushing to the target. Same Secret shapes as `pushSecret`. |
 | `env` | map[string]string | no | Environment variables (`ENV` directives) |
-| `apt.mirror` | string | no | APT mirror URL; Ubuntu codename is auto-detected from `/etc/os-release` |
+| `apt.mirror` | string | no | APT mirror URL baked into the image's `/etc/apt/sources.list`; Ubuntu codename is auto-detected from `/etc/os-release` |
 | `apt.install` | []string | no | APT packages to install |
 | `pip.install` | []string | no | pip packages to install |
 | `shell` | []ShellStep | no | Shell commands to run (each becomes a `RUN` layer) |
@@ -191,7 +197,7 @@ By default every build uses the chart-level `image-registry-secret` (from `regis
 
 > **One credential per registry, used for both pull and push.** A docker `config.json` has a single entry per registry host, and Kaniko uses it for every operation on that host (base-image pull, cache, and push). You therefore cannot give a single registry separate read-only and write-only credentials — whichever wins the merge (the `pullSecret` entry on a conflict) becomes *the* credential for that host. In practice this is fine: a push-capable credential can also pull (the registry push scope includes pull), so for a registry you both pull from and push to, use one push-capable credential (in `registryCredentials` or `pushSecret`) and do not add a competing `pullSecret` entry for it. Genuine read/write separation only works when the base-image source and the push target are **different** registry hosts — then `pushSecret` (target) and `pullSecret` (source) land on distinct `auths` keys and don't collide.
 
-Example: `baseImage: registry.luna.ogpu.cloud/luna/ubuntu-22.04:latest` with `config.defaultImageRegistry=registry.luna.ogpu.cloud/patched-images` produces `registry.luna.ogpu.cloud/patched-images/ubuntu-22.04-patch:latest`.
+Example: `baseImage: registry.example.com/myns/ubuntu-22.04:latest` with `config.defaultImageRegistry=registry.example.com/patched-images` produces `registry.example.com/patched-images/ubuntu-22.04-patch:latest`.
 
 ### Test manifests
 
@@ -204,6 +210,63 @@ Example manifests are provided under `test/k8s/`:
 kubectl apply -k test/k8s/sshd/
 # or
 kubectl apply -k test/k8s/complicated/
+```
+
+## Advanced features
+
+### Content-addressed build dedup
+
+The controller computes a deterministic hash of every `ImagePatch` spec. Before creating a Kaniko Job it HEADs `<repo>:dedup-<hash>` in the registry; on a cache hit it retags the existing manifest under the user tag (pure manifest copy, no rebuild) and marks the CR `Succeeded` with `Status.DedupHit=true`. On a miss, Kaniko pushes both the user tag and the dedup tag in one shot. Enabled by default; disable with `dedup.enabled: false` if your registry retention or quota rules can't tolerate the extra tags.
+
+### Kaniko build cache
+
+Set `kaniko.buildCache.enabled: true` to cache intermediate `RUN` layers in a registry repo. The cache repo is derived automatically as `<config.defaultImageRegistry>/kaniko-build-cache`. Multi-node safe. See [`charts/image-patcher/examples/values-example.yaml`](charts/image-patcher/examples/values-example.yaml) for the full `kaniko.buildOptions` tuning surface (`snapshotMode`, `singleSnapshot`, `ignorePaths`, `cacheTTL`).
+
+### Build-time mirrors (apt and PyPI)
+
+`kaniko.buildAptMirror` and `kaniko.buildPypiMirror` redirect `apt-get` and `pip install` through mirrors during the Kaniko build **without baking any mirror config into the produced image**. Useful on clusters where upstream registries are slow or unreachable:
+
+```yaml
+kaniko:
+  buildAptMirror: http://mirrors.163.com/ubuntu        # NetEase mirror
+  buildPypiMirror: https://pypi.tuna.tsinghua.edu.cn/simple  # TUNA mirror
+```
+
+These are orthogonal to `spec.apt.mirror` (which bakes a mirror URL into the image's `/etc/apt/sources.list`).
+
+### Registry pull-through mirrors
+
+`kaniko.registryMap` maps upstream registry hosts to pull-through mirrors for base-image fetches. Useful for air-gapped clusters or blocked egress:
+
+```yaml
+kaniko:
+  registryMap:
+    docker.io: docker.mirror.example.com
+```
+
+Only affects base-image pulls; pushes still go to the real target registry. `docker.io` is silently normalized to `index.docker.io` before being passed to Kaniko.
+
+### Healthcheck CronJob
+
+Set `healthcheck.enabled: true` to run a synthetic canary CronJob that exercises the full build pipeline (base pull → Dockerfile generation → Kaniko build → registry push) and cache machinery on a schedule. Results surface through the `image_patcher_builds_total` metric. See `healthcheck.*` in [`charts/image-patcher/examples/values-example.yaml`](charts/image-patcher/examples/values-example.yaml) for configuration.
+
+### Grafana dashboard
+
+Set `dashboards.enabled: true` to bundle the operator's dashboard as a ConfigMap picked up by the kube-prometheus-stack Grafana sidecar automatically. Labels default to `grafana_dashboard=1`; override with `dashboards.label.*` if your sidecar uses different selectors.
+
+### Prometheus metrics
+
+The controller exposes Prometheus metrics on `:8443/metrics` (HTTPS, authn/authz via controller-runtime). Enable `ServiceMonitor` auto-discovery with `metrics.serviceMonitor.enabled: true`. See [`docs/design/metrics.md`](docs/design/metrics.md) for the full metrics reference.
+
+## Chart signature verification
+
+Released charts are signed with [cosign](https://github.com/sigstore/cosign) keyless in CI — the signature is bound to the GitHub Actions workflow identity via Sigstore:
+
+```sh
+cosign verify \
+  --certificate-identity-regexp 'https://github.com/pinclr/image-patcher/.github/workflows/cd.yml@.*' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  ghcr.io/pinclr/charts/image-patcher:<version>
 ```
 
 ## Development
