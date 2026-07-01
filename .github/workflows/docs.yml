@@ -34,14 +34,17 @@ jobs:
         working-directory: docs/website
         run: npm run build
 
+      - name: install rclone
+        run: curl https://rclone.org/install.sh | sudo bash
+
       - name: upload to OSS
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
-          AWS_DEFAULT_REGION: cn-beijing
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
         run: |
-          aws configure set default.s3.addressing_style virtual
-          aws configure set default.s3.payload_signing_enabled false
-          aws s3 sync docs/website/dist/ s3://imagepatcher/ \
-            --endpoint-url https://oss-cn-beijing.aliyuncs.com \
-            --delete
+          rclone sync docs/website/dist/ :s3:imagepatcher \
+            --s3-provider Alibaba \
+            --s3-endpoint oss-cn-beijing.aliyuncs.com \
+            --s3-access-key-id "$OSS_ACCESS_KEY_ID" \
+            --s3-secret-access-key "$OSS_ACCESS_KEY_SECRET" \
+            --s3-acl public-read
