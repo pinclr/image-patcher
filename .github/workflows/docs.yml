@@ -40,6 +40,7 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
           AWS_DEFAULT_REGION: cn-beijing
         run: |
+          aws configure set default.s3.addressing_style virtual
           aws s3 sync docs/website/dist/ s3://imagepatcher/ \
             --endpoint-url https://oss-cn-beijing.aliyuncs.com \
             --delete
