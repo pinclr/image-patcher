@@ -4,8 +4,8 @@
    calcs for just the right column. Unlayered rules override Starlight's
    @layer starlight.core styles. */
 :root {
-  /* 3/5 of the default 18.75rem sidebar width. */
-  --toc-width: 11.25rem;
+  /* Half of the previous 11.25rem TOC width. */
+  --toc-width: 5.625rem;
 }
 
 @media (min-width: 72rem) {
