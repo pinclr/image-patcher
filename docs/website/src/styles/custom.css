@@ -1,22 +1,26 @@
-/* Narrow the right-hand table-of-contents and let the main content column fill
-   the whole span between the left nav and the (narrowed) right TOC. Starlight
-   derives the right column from --sl-sidebar-width and caps content at
-   --sl-content-width, so we override both. Unlayered rules win over Starlight's
-   @layer starlight.core styles. */
+/* Make all three columns percentage-based so the whole layout flows with the
+   viewport. --sl-sidebar-width drives the left nav *and* the content's left
+   offset (both resolve as a % of the viewport, so they stay in sync);
+   --toc-width drives the right table of contents; the content pane fills the
+   rest. Unlayered rules win over Starlight's @layer starlight.core styles. */
 :root {
-  --toc-width: 6rem;
+  --sl-sidebar-width: 18%;
+  --toc-width: 12%;
 }
 
 @media (min-width: 72rem) {
-  /* Right TOC column: exactly --toc-width, pinned to the right edge. */
+  /* Right TOC column, as a % of the area between the two nav rails. */
   .right-sidebar-container {
     width: var(--toc-width);
   }
 
-  /* Main pane: everything from the left nav up to the TOC. */
+  /* Main pane: everything from the left nav up to the TOC. min-width:0 lets the
+     flex item shrink so wide content (long code, tables) wraps instead of
+     forcing the pane wider and pushing the TOC off-screen. */
   [data-has-sidebar][data-has-toc] .main-pane {
     --sl-content-margin-inline: 0;
     width: calc(100% - var(--toc-width));
+    min-width: 0;
   }
 
   /* Let the content stretch to fill the main pane instead of capping at
