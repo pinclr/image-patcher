@@ -18,7 +18,7 @@ Set `kaniko.buildCache.enabled: true` to cache intermediate `RUN` layers in a re
 
 See `charts/image-patcher/examples/values-example.yaml` for the full `kaniko.buildOptions` tuning surface (`snapshotMode`, `singleSnapshot`, `ignorePaths`, `cacheTTL`).
 
-## Build-Time Mirrors (apt and PyPI)
+## Build-Time Mirrors
 
 `kaniko.buildAptMirror` and `kaniko.buildPypiMirror` redirect `apt-get` and `pip install` through mirrors during the Kaniko build **without baking any mirror config into the produced image**. Useful on clusters where upstream registries are slow or unreachable:
 
