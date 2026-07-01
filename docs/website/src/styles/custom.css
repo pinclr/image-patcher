@@ -48,3 +48,16 @@
   padding-top: 0;
   padding-bottom: 1.5rem;
 }
+
+/* Without a hero image the grid is still 7fr 4fr at ≥50rem, leaving the
+   text block at only ~64% width. Reset to full-width single column. */
+@media (min-width: 50rem) {
+  .hero {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Hero h1: keep it on one line at original Starlight size. */
+.hero h1 {
+  white-space: nowrap;
+}
