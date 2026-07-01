@@ -22,44 +22,44 @@ export default defineConfig({
       sidebar: [
         {
           label: 'Guides',
-          translations: { 'zh-cn': '指南' },
+          translations: { 'zh-CN': '指南' },
           items: [
             {
               label: 'Overview',
               link: '/',
-              translations: { 'zh-cn': '概览' },
+              translations: { 'zh-CN': '概览' },
             },
             {
               label: 'Getting Started',
               link: '/getting-started/',
-              translations: { 'zh-cn': '快速开始' },
+              translations: { 'zh-CN': '快速开始' },
             },
           ],
         },
         {
           label: 'Reference',
-          translations: { 'zh-cn': '参考' },
+          translations: { 'zh-CN': '参考' },
           items: [
             {
               label: 'CRD Reference',
               link: '/crd-reference/',
-              translations: { 'zh-cn': 'CRD 参考' },
+              translations: { 'zh-CN': 'CRD 参考' },
             },
             {
               label: 'Advanced Features',
               link: '/advanced/',
-              translations: { 'zh-cn': '高级功能' },
+              translations: { 'zh-CN': '高级功能' },
             },
           ],
         },
         {
           label: 'Contributing',
-          translations: { 'zh-cn': '贡献' },
+          translations: { 'zh-CN': '贡献' },
           items: [
             {
               label: 'Development Guide',
               link: '/development/',
-              translations: { 'zh-cn': '开发指南' },
+              translations: { 'zh-CN': '开发指南' },
             },
           ],
         },
