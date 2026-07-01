@@ -2,7 +2,7 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 
 export default defineConfig({
-  prefetch: true,
+  prefetch: { prefetchAll: true },
   vite: {
     preview: {
       allowedHosts: ['mink-trusted-vigorously.ngrok-free.app'],
