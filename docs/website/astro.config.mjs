@@ -10,7 +10,7 @@ export default defineConfig({
   },
   integrations: [
     starlight({
-      title: 'image-patch-operator',
+      title: 'image patch operator',
       customCss: ['./src/styles/custom.css'],
       components: {
         Head: './src/components/Head.astro',
