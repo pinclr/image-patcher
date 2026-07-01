@@ -79,13 +79,13 @@ jobs:
           version: v3.17.1
 
       - name: helm lint (with example values)
-        run: helm lint charts/image-patcher -f charts/image-patcher/examples/values-ysyb.yaml
+        run: helm lint charts/image-patcher -f charts/image-patcher/examples/values-example.yaml
 
       - name: helm template (with example values)
         run: |
           helm template image-patch charts/image-patcher \
             -n image-patch-system \
-            -f charts/image-patcher/examples/values-ysyb.yaml \
+            -f charts/image-patcher/examples/values-example.yaml \
             > /tmp/rendered.yaml
 
       - name: schema rejects bare install
