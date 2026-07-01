@@ -1,0 +1,62 @@
+---
+title: image patch operator
+description: A Kubernetes operator that patches container images declaratively using the ImagePatch CRD.
+hero:
+  tagline: Declaratively patch Kubernetes container images in-cluster
+  actions:
+    - text: Get Started
+      link: /getting-started/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/pinclr/image-patcher
+      icon: external
+      variant: minimal
+    - text: Artifact Hub
+      link: https://artifacthub.io/packages/helm/image-patcher/image-patcher
+      icon: external
+      variant: minimal
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+## What is image-patch-operator?
+
+image-patch-operator lets you define image customizations (apt packages, shell commands, environment variables, entrypoint, etc.) as a Kubernetes custom resource. The controller watches `ImagePatch` resources, generates a Dockerfile, and launches a Kaniko job to build and push the patched image to a container registry.
+
+## Published Images and Chart
+
+Released artifacts are public — you do not need to build anything to install:
+
+| Artifact | Location |
+| --- | --- |
+| Controller image | `ghcr.io/pinclr/image-patcher-operator:<appVersion>` (also `:latest`) |
+| Controller image (mirror) | `quay.io/pinclr/image-patcher-operator:<appVersion>` |
+| Helm chart (OCI) | `oci://ghcr.io/pinclr/charts/image-patcher`, version `<version>` |
+
+The chart is also listed on [Artifact Hub](https://artifacthub.io/packages/helm/image-patcher/image-patcher).
+
+## Explore the Docs
+
+<CardGrid>
+  <LinkCard
+    title="Getting Started"
+    href="/getting-started/"
+    description="Install the operator on your cluster and create your first ImagePatch resource."
+  />
+  <LinkCard
+    title="CRD Reference"
+    href="/crd-reference/"
+    description="Explore all available spec fields, target image resolution, and credential precedence."
+  />
+  <LinkCard
+    title="Advanced Features"
+    href="/advanced/"
+    description="Build dedup, Kaniko cache, build-time mirrors, Healthcheck CronJob, and Grafana dashboards."
+  />
+  <LinkCard
+    title="Development Guide"
+    href="/development/"
+    description="Run the controller locally, regenerate code, run tests, and contribute."
+  />
+</CardGrid>

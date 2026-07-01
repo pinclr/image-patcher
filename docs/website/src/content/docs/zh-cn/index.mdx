@@ -1,0 +1,63 @@
+---
+title: image-patch-operator
+description: 一个通过 ImagePatch CRD 以声明式方式修补容器镜像的 Kubernetes Operator。
+template: splash
+hero:
+  tagline: 使用 Kaniko 在 Kubernetes 集群内声明式地修补容器镜像。
+  actions:
+    - text: 快速开始
+      link: /zh-cn/getting-started/
+      icon: right-arrow
+      variant: primary
+    - text: 在 GitHub 上查看
+      link: https://github.com/pinclr/image-patcher
+      icon: external
+      variant: minimal
+    - text: Artifact Hub
+      link: https://artifacthub.io/packages/search?ts_query_web=image-patcher
+      icon: external
+      variant: minimal
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+## 什么是 image-patch-operator？
+
+image-patch-operator 让你可以将镜像的定制内容（apt 软件包、shell 命令、环境变量、entrypoint 等）定义为一个 Kubernetes 自定义资源。控制器会监听 `ImagePatch` 资源，生成 Dockerfile，并启动一个 Kaniko Job 来构建修补后的镜像并推送到容器镜像仓库。
+
+## 已发布的镜像与 Chart
+
+发布的制品都是公开的 —— 你无需构建任何东西即可安装：
+
+| 制品 | 位置 |
+| --- | --- |
+| 控制器镜像 | `ghcr.io/pinclr/image-patcher-operator:<appVersion>`（同时有 `:latest`） |
+| 控制器镜像（镜像源） | `quay.io/pinclr/image-patcher-operator:<appVersion>` |
+| Helm Chart（OCI） | `oci://ghcr.io/pinclr/charts/image-patcher`，版本 `<version>` |
+
+该 Chart 同时收录于 [Artifact Hub](https://artifacthub.io/packages/search?ts_query_web=image-patcher)。
+
+## 浏览文档
+
+<CardGrid>
+  <LinkCard
+    title="快速开始"
+    href="/zh-cn/getting-started/"
+    description="在集群上安装 Operator 并创建你的第一个 ImagePatch 资源。"
+  />
+  <LinkCard
+    title="CRD 参考"
+    href="/zh-cn/crd-reference/"
+    description="探索所有可用的 spec 字段、目标镜像解析逻辑和凭据优先级。"
+  />
+  <LinkCard
+    title="高级功能"
+    href="/zh-cn/advanced/"
+    description="构建去重、Kaniko 缓存、构建时镜像源、健康检查 CronJob 和 Grafana 仪表盘。"
+  />
+  <LinkCard
+    title="开发指南"
+    href="/zh-cn/development/"
+    description="在本地运行控制器、重新生成代码、运行测试并贡献代码。"
+  />
+</CardGrid>

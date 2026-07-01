@@ -1,0 +1,63 @@
+/* Right TOC: fixed rem width (similar to kubernetes.io ~200px).
+   Left nav keeps Starlight's default 18.75rem.
+   Content fills the remaining space.
+   Unlayered rules win over Starlight's @layer starlight.core. */
+:root {
+  --toc-width: 16rem;
+}
+
+@media (min-width: 72rem) {
+  /* Reserve the right column at fixed width. */
+  .right-sidebar-container {
+    width: var(--toc-width);
+  }
+
+  /* Pin the fixed sidebar panel to the right edge of the viewport. */
+  .right-sidebar {
+    right: 0;
+    width: var(--toc-width);
+  }
+
+  .right-sidebar-panel {
+    width: calc(var(--toc-width) - 2 * var(--sl-sidebar-pad-x));
+  }
+
+  /* Content pane fills everything between left nav and right TOC.
+     max-width: none overrides Starlight's 45rem cap so text doesn't
+     wrap early. min-width: 0 prevents wide content (tables, code)
+     from pushing the pane wider than its flex allocation. */
+  [data-has-sidebar][data-has-toc] .main-pane {
+    --sl-content-margin-inline: 0;
+    width: calc(100% - var(--toc-width));
+    min-width: 0;
+  }
+
+  [data-has-sidebar][data-has-toc] .main-pane .sl-container {
+    max-width: none;
+  }
+}
+
+/* Remove the vertical divider between social icons and the theme toggle. */
+.social-icons::after {
+  display: none;
+}
+
+/* Overview page: remove hero's large top padding so title aligns with
+   other pages instead of sitting low on the page. */
+.hero {
+  padding-top: 0;
+  padding-bottom: 1.5rem;
+}
+
+/* Without a hero image the grid is still 7fr 4fr at ≥50rem, leaving the
+   text block at only ~64% width. Reset to full-width single column. */
+@media (min-width: 50rem) {
+  .hero {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Hero h1: keep it on one line at original Starlight size. */
+.hero h1 {
+  white-space: nowrap;
+}
