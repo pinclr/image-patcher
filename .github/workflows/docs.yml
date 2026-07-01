@@ -1,0 +1,47 @@
+name: docs
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - docs/website/**
+  workflow_dispatch:
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy-docs:
+    name: build and deploy docs to OSS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: docs/website/package-lock.json
+
+      - name: install dependencies
+        working-directory: docs/website
+        run: npm ci
+
+      - name: build
+        working-directory: docs/website
+        run: npm run build
+
+      - name: set up ossutil
+        uses: manyuanrong/setup-ossutil@v3
+        with:
+          endpoint: oss-cn-beijing.aliyuncs.com
+          access-key-id: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          access-key-secret: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+
+      - name: upload to OSS
+        run: |
+          ossutil cp -r docs/website/dist/ oss://imagepatcher/ \
+            --force \
+            --update
