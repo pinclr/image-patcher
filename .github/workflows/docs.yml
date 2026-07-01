@@ -28,25 +28,18 @@ jobs:
 
       - name: install dependencies
         working-directory: docs/website
-        run: npm ci
+        run: npm install
 
       - name: build
         working-directory: docs/website
         run: npm run build
 
-      - name: install ossutil
-        run: |
-          curl -sSL https://gosspublic.alicdn.com/ossutil/1.7.19/ossutil64 -o ossutil
-          chmod +x ossutil
-
       - name: upload to OSS
         env:
-          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
-          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          AWS_DEFAULT_REGION: cn-beijing
         run: |
-          ./ossutil cp -r docs/website/dist/ oss://imagepatcher/ \
-            -e oss-cn-beijing.aliyuncs.com \
-            -i "$OSS_ACCESS_KEY_ID" \
-            -k "$OSS_ACCESS_KEY_SECRET" \
-            --force \
-            --update
+          aws s3 sync docs/website/dist/ s3://imagepatcher/ \
+            --endpoint-url https://oss-cn-beijing.aliyuncs.com \
+            --delete
