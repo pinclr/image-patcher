@@ -37,14 +37,29 @@ jobs:
       - name: install rclone
         run: curl https://rclone.org/install.sh | sudo bash
 
-      - name: upload to OSS
+      - name: upload hashed assets to OSS (long-lived cache)
+        env:
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+        run: |
+          rclone sync docs/website/dist/_astro/ :s3:imagepatcher/_astro/ \
+            --s3-provider Alibaba \
+            --s3-endpoint oss-cn-beijing.aliyuncs.com \
+            --s3-access-key-id "$OSS_ACCESS_KEY_ID" \
+            --s3-secret-access-key "$OSS_ACCESS_KEY_SECRET" \
+            --s3-acl public-read \
+            --header-upload "Cache-Control: public, max-age=31536000, immutable"
+
+      - name: upload pages to OSS (no-cache, filenames are reused across deploys)
         env:
           OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
           OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
         run: |
           rclone sync docs/website/dist/ :s3:imagepatcher \
+            --exclude "_astro/**" \
             --s3-provider Alibaba \
             --s3-endpoint oss-cn-beijing.aliyuncs.com \
             --s3-access-key-id "$OSS_ACCESS_KEY_ID" \
             --s3-secret-access-key "$OSS_ACCESS_KEY_SECRET" \
-            --s3-acl public-read
+            --s3-acl public-read \
+            --header-upload "Cache-Control: no-cache"
