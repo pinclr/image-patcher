@@ -17,7 +17,7 @@ export default defineConfig({
       },
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/pinclr/image-patcher' },
-        { icon: 'external', label: 'Artifact Hub', href: 'https://artifacthub.io/packages/helm/image-patcher/image-patcher' },
+        { icon: 'external', label: 'ArtifactHUB', href: 'https://artifacthub.io/packages/helm/image-patcher/image-patcher' },
       ],
       defaultLocale: 'root',
       locales: {
