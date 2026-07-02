@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - dev/robert/msp-21-deploy-imagepatcher-site
     paths:
       - docs/website/**
   workflow_dispatch:
